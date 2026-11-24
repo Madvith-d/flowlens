@@ -1,0 +1,8 @@
+# CI baseline outline.
+# Concrete backend/frontend test jobs are added from the feature branches
+# after the scaffold gate passes; root workflow changes require coordination.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:

@@ -1,0 +1,33 @@
+# --- Python / backend ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.env
+.env.local
+.env.*.local
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.db
+*.sqlite3
+dist/
+build/
+
+# --- Node / frontend ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store
+
+# --- Runtime artifacts ---
+storage/
+*.log

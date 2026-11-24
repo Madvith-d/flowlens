@@ -1,0 +1,1556 @@
+openapi: 3.1.0
+info:
+  title: FlowLens API
+  version: 0.1.0
+  description: |
+    Shared FlowLens API between the FastAPI backend (owner: Madvith) and the
+    Next.js frontend (owner: Sameeksha). This contract is frozen at the end of
+    Phase 0/1; changes must be coordinated before either side diverges.
+
+    Conventions:
+    - All routes are versioned under `/api/v1`.
+    - All state-changing cookie-authenticated requests require CSRF/Origin validation.
+    - Browser responses never contain GitHub tokens, credentials, server
+      filesystem paths, or stack traces.
+    - Lists are paginated with bounded `per_page` (max 100).
+    - Graph, impact and symbol results are bounded with explicit `truncated` flags.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+
+tags:
+  - name: auth
+  - name: github
+  - name: projects
+  - name: analyses
+  - name: graph
+  - name: impact
+  - name: diff
+  - name: coverage
+  - name: reports
+
+paths:
+  # ------------------------------------------------------------------ health
+  /api/v1/health:
+    get:
+      tags: [auth]
+      summary: Liveness probe
+      operationId: health
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /api/v1/ready:
+    get:
+      tags: [auth]
+      summary: Readiness probe
+      operationId: ready
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ready]
+
+  # -------------------------------------------------------------------- auth
+  /api/v1/auth/github/start:
+    get:
+      tags: [auth]
+      summary: Start GitHub App user authorization
+      description: |
+        Generates a one-time OAuth `state` and redirects (302) to the GitHub App
+        user authorization page.
+      operationId: authGithubStart
+      responses:
+        "302":
+          description: Redirect to GitHub authorization
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+  /api/v1/auth/github/callback:
+    get:
+      tags: [auth]
+      summary: GitHub OAuth callback
+      description: |
+        Validates `state` (one-time, short expiry), exchanges the authorization
+        code server-side, creates or updates the FlowLens user keyed on GitHub's
+        numeric user ID, establishes an HttpOnly application session cookie, and
+        redirects (302) to the frontend.
+      operationId: authGithubCallback
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the frontend with an active session
+          headers:
+            Set-Cookie:
+              description: HttpOnly application session cookie
+              schema:
+                type: string
+            Location:
+              schema:
+                type: string
+                format: uri
+        "302invalid":
+          description: On failure the user is redirected to the frontend with an error query parameter; no session is created.
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: Current user and session state
+      operationId: authMe
+      responses:
+        "200":
+          description: Current session state. Never contains GitHub tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate the application session
+      operationId: authLogout
+      responses:
+        "204":
+          description: Session invalidated; session cookie cleared
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  # ------------------------------------------------------------------ github
+  /api/v1/github/install/start:
+    get:
+      tags: [github]
+      summary: Start GitHub App installation flow
+      description: Redirects (302) to the FlowLens GitHub App installation page.
+      operationId: githubInstallStart
+      responses:
+        "302":
+          description: Redirect to GitHub App installation
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/github/install/callback:
+    get:
+      tags: [github]
+      summary: Installation callback
+      description: |
+        Receives `installation_id` from GitHub after installation. The
+        installation ID is treated as untrusted: it is verified against the
+        GitHub API before being recorded.
+      operationId: githubInstallCallback
+      parameters:
+        - in: query
+          name: installation_id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: setup_action
+          schema:
+            type: string
+            enum: [installed, updated]
+      responses:
+        "302":
+          description: Redirect to the frontend after recording the verified installation
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/github/installations:
+    get:
+      tags: [github]
+      summary: List installations accessible to the current user
+      operationId: githubListInstallations
+      responses:
+        "200":
+          description: Accessible installations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GitHubInstallation"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/github/installations/{installation_id}/repositories:
+    get:
+      tags: [github]
+      summary: Paginated repositories available through an installation
+      operationId: githubListInstallationRepositories
+      parameters:
+        - $ref: "#/components/parameters/PathInstallationId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Repositories the user and installation are both permitted to access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedRepositories"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  # ---------------------------------------------------------------- projects
+  /api/v1/projects:
+    get:
+      tags: [projects]
+      summary: List the current user's projects
+      operationId: listProjects
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Owned projects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedProjects"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [projects]
+      summary: Create a project
+      description: Creates a project record without a snapshot (used before attaching a source).
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/projects/from-upload:
+    post:
+      tags: [projects]
+      summary: Create a project and snapshot from a ZIP upload
+      operationId: createProjectFromUpload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: ZIP archive of a Python project
+                name:
+                  type: string
+                  maxLength: 200
+      responses:
+        "201":
+          description: Project created with its first immutable snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/projects/from-github:
+    post:
+      tags: [projects]
+      summary: Create a project and snapshot from a verified GitHub repository
+      description: |
+        Repository ID, installation ID and ref are verified server-side against
+        the GitHub API before import. The ref is resolved to a commit SHA and
+        recorded as immutable snapshot provenance.
+      operationId: createProjectFromGithub
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repository_id, installation_id, ref]
+              properties:
+                repository_id:
+                  type: integer
+                installation_id:
+                  type: integer
+                ref:
+                  type: string
+                  minLength: 1
+                name:
+                  type: string
+                  maxLength: 200
+      responses:
+        "201":
+          description: Project created with its first immutable snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/projects/{project_id}:
+    get:
+      tags: [projects]
+      summary: Project detail with source provenance
+      operationId: getProject
+      parameters:
+        - $ref: "#/components/parameters/PathProjectId"
+      responses:
+        "200":
+          description: Project detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/projects/{project_id}/refresh:
+    post:
+      tags: [projects]
+      summary: Refresh a connected GitHub project into a new immutable snapshot
+      operationId: refreshProject
+      description: Creates a new snapshot from the recorded ref; never mutates historical snapshots.
+      parameters:
+        - $ref: "#/components/parameters/PathProjectId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ref:
+                  type: string
+                  description: Optional different branch/tag/commit to snapshot
+      responses:
+        "201":
+          description: New snapshot created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Snapshot"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/projects/{project_id}/github-connection:
+    delete:
+      tags: [projects]
+      summary: Disconnect the GitHub repository link
+      operationId: disconnectGithubConnection
+      description: Removes future repository access but retains existing snapshots and reports.
+      parameters:
+        - $ref: "#/components/parameters/PathProjectId"
+      responses:
+        "204":
+          description: Connection removed; snapshots and reports retained
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/projects/{project_id}/snapshots:
+    get:
+      tags: [projects]
+      summary: List immutable snapshots of a project
+      operationId: listSnapshots
+      parameters:
+        - $ref: "#/components/parameters/PathProjectId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Snapshots, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSnapshots"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # --------------------------------------------------------------- analyses
+  /api/v1/snapshots/{snapshot_id}/analyses:
+    post:
+      tags: [analyses]
+      summary: Start an analysis run for a snapshot
+      operationId: startAnalysis
+      description: Queues a static analysis of the immutable snapshot. Never executes analyzed source.
+      parameters:
+        - $ref: "#/components/parameters/PathSnapshotId"
+      responses:
+        "202":
+          description: Analysis created in `queued` state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/analyses/{analysis_id}:
+    get:
+      tags: [analyses]
+      summary: Analysis status and summary
+      operationId: getAnalysis
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+      responses:
+        "200":
+          description: Analysis run state, counters and diagnostics summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/analyses/{analysis_id}/symbols:
+    get:
+      tags: [analyses]
+      summary: Searchable, paginated symbol catalog
+      operationId: listSymbols
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - in: query
+          name: q
+          description: Search by short or qualified name
+          schema:
+            type: string
+        - in: query
+          name: kind
+          schema:
+            $ref: "#/components/schemas/NodeKind"
+      responses:
+        "200":
+          description: Symbols
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedSymbols"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------- graph
+  /api/v1/analyses/{analysis_id}/graph:
+    get:
+      tags: [graph]
+      summary: Filtered graph or subgraph
+      operationId: getGraph
+      description: |
+        Returns a bounded subgraph. View selects the granularity level;
+        filters narrow node/edge kinds. Results are deterministic; `truncated`
+        indicates server-side limits were hit.
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+        - in: query
+          name: view
+          schema:
+            type: string
+            enum: [module, class, function]
+            default: function
+        - in: query
+          name: node_kinds
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/NodeKind"
+        - in: query
+          name: edge_kinds
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/EdgeKind"
+        - in: query
+          name: limit
+          description: Maximum number of nodes returned
+          schema:
+            type: integer
+            default: 500
+            maximum: 2000
+      responses:
+        "200":
+          description: Graph payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/analyses/{analysis_id}/nodes/{node_id}:
+    get:
+      tags: [graph]
+      summary: Node detail with metrics and coverage status
+      operationId: getNode
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+        - $ref: "#/components/parameters/PathNodeId"
+      responses:
+        "200":
+          description: Node detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphNode"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/analyses/{analysis_id}/nodes/{node_id}/neighbors:
+    get:
+      tags: [graph]
+      summary: Bounded neighborhood expansion
+      operationId: getNodeNeighbors
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+        - $ref: "#/components/parameters/PathNodeId"
+        - in: query
+          name: depth
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 3
+            default: 1
+        - in: query
+          name: direction
+          schema:
+            $ref: "#/components/schemas/ImpactDirection"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        "200":
+          description: Neighbor nodes and connecting edges
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ------------------------------------------------------------------ impact
+  /api/v1/analyses/{analysis_id}/impact:
+    post:
+      tags: [impact]
+      summary: Impact query for one or more target symbols
+      operationId: computeImpact
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImpactRequest"
+      responses:
+        "200":
+          description: Impact result with paths and explainable risk score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpactResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # -------------------------------------------------------------------- diff
+  /api/v1/analyses/{analysis_id}/diff:
+    post:
+      tags: [diff]
+      summary: Submit a unified diff and receive changed symbols and combined impact
+      operationId: analyzeDiff
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [unified_diff]
+              properties:
+                unified_diff:
+                  type: string
+                  description: Unified diff text
+      responses:
+        "200":
+          description: Changed symbol mapping and combined impact
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiffResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableDiff"
+
+  # ---------------------------------------------------------------- coverage
+  /api/v1/analyses/{analysis_id}/coverage:
+    post:
+      tags: [coverage]
+      summary: Attach a Coverage.py JSON artifact
+      operationId: attachCoverage
+      description: |
+        Validates the Coverage.py JSON schema, normalizes paths against the
+        snapshot, and maps covered/executable lines to symbol spans.
+        Missing coverage is reported as `unknown`, never as zero.
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Coverage.py JSON content (`coverage json` output)
+      responses:
+        "200":
+          description: Coverage mapping summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoverageResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ----------------------------------------------------------------- reports
+  /api/v1/analyses/{analysis_id}/reports:
+    post:
+      tags: [reports]
+      summary: Generate a Markdown report
+      operationId: generateReport
+      description: Generates a deterministic Markdown impact report from stored analysis/impact data. Body optionally scopes the report to specific targets.
+      parameters:
+        - $ref: "#/components/parameters/PathAnalysisId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_ids:
+                  type: array
+                  items:
+                    type: string
+                direction:
+                  $ref: "#/components/schemas/ImpactDirection"
+                max_depth:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+      responses:
+        "201":
+          description: Report created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/reports/{report_id}/download:
+    get:
+      tags: [reports]
+      summary: Download a generated Markdown report
+      operationId: downloadReport
+      parameters:
+        - $ref: "#/components/parameters/PathReportId"
+      responses:
+        "200":
+          description: Markdown file
+          content:
+            text/markdown:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    Page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      in: query
+      name: per_page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    PathProjectId:
+      in: path
+      name: project_id
+      required: true
+      schema:
+        $ref: "#/components/schemas/ObjectId"
+    PathSnapshotId:
+      in: path
+      name: snapshot_id
+      required: true
+      schema:
+        $ref: "#/components/schemas/ObjectId"
+    PathAnalysisId:
+      in: path
+      name: analysis_id
+      required: true
+      schema:
+        $ref: "#/components/schemas/ObjectId"
+    PathNodeId:
+      in: path
+      name: node_id
+      required: true
+      schema:
+        type: string
+        description: Stable symbol/node ID within the analysis
+    PathReportId:
+      in: path
+      name: report_id
+      required: true
+      schema:
+        $ref: "#/components/schemas/ObjectId"
+    PathInstallationId:
+      in: path
+      name: installation_id
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authenticated but access denied (e.g. repository not accessible)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource does not exist or is not owned by the user
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: State conflict (e.g. analysis not completed)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Upload exceeds configured size limits
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableDiff:
+      description: Diff could not be parsed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # ------------------------------------------------------------ primitives
+    ObjectId:
+      type: string
+      description: Simple opaque resource identifier (e.g. UUID or short ID)
+    Timestamp:
+      type: string
+      format: date-time
+    ErrorCode:
+      type: string
+      description: |
+        Stable, documented error code. Extensible list; initial codes:
+        VALIDATION_ERROR, AUTH_REQUIRED, OAUTH_STATE_INVALID,
+        GITHUB_TOKEN_ERROR, INSTALLATION_NOT_FOUND,
+        REPOSITORY_ACCESS_DENIED, RATE_LIMITED, UPLOAD_INVALID,
+        UPLOAD_TOO_LARGE, PROJECT_NOT_FOUND, SNAPSHOT_NOT_FOUND,
+        ANALYSIS_NOT_FOUND, ANALYSIS_NOT_READY, DIFF_INVALID,
+        COVERAGE_INVALID, NOT_FOUND, FORBIDDEN, CONFLICT, INTERNAL_ERROR.
+      enum:
+        - VALIDATION_ERROR
+        - AUTH_REQUIRED
+        - OAUTH_STATE_INVALID
+        - GITHUB_TOKEN_ERROR
+        - INSTALLATION_NOT_FOUND
+        - REPOSITORY_ACCESS_DENIED
+        - RATE_LIMITED
+        - UPLOAD_INVALID
+        - UPLOAD_TOO_LARGE
+        - PROJECT_NOT_FOUND
+        - SNAPSHOT_NOT_FOUND
+        - ANALYSIS_NOT_FOUND
+        - ANALYSIS_NOT_READY
+        - DIFF_INVALID
+        - COVERAGE_INVALID
+        - NOT_FOUND
+        - FORBIDDEN
+        - CONFLICT
+        - INTERNAL_ERROR
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code:
+              $ref: "#/components/schemas/ErrorCode"
+            message:
+              type: string
+              description: Human-readable message; no stack traces, secrets, or server paths
+            details:
+              type: object
+              additionalProperties: true
+            request_id:
+              type: string
+    Pagination:
+      type: object
+      required: [page, per_page, total]
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    # ------------------------------------------------------------------ enums
+    SourceProvider:
+      type: string
+      enum: [github, upload]
+    AnalysisState:
+      type: string
+      enum: [queued, running, completed, completed_with_warnings, failed]
+    NodeKind:
+      type: string
+      description: Graph/symbol node kind. `module` covers file/module granularity.
+      enum: [module, class, function, method]
+    EdgeKind:
+      type: string
+      description: |
+        Typed dependency edges. `CONTAINS` is structural and must not be
+        treated as a dependency in traversals.
+      enum: [CALLS, IMPORTS, INHERITS, REFERENCES, CONTAINS]
+    ImpactDirection:
+      type: string
+      description: |
+        `upstream` = callers/dependents of the target,
+        `downstream` = callees/dependencies of the target.
+      enum: [upstream, downstream, both]
+    Confidence:
+      type: string
+      enum: [high, medium, low]
+    CoverageStatus:
+      type: string
+      enum: [covered, partially_covered, uncovered, unknown]
+    ReportFormat:
+      type: string
+      enum: [markdown]
+
+    # ------------------------------------------------------------------- auth
+    AuthUser:
+      type: object
+      required: [id, github_login]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        github_login:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+      description: Never includes GitHub access or refresh tokens.
+    SessionState:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated:
+          type: boolean
+        user:
+          $ref: "#/components/schemas/AuthUser"
+
+    # ---------------------------------------------------------------- github
+    GitHubInstallation:
+      type: object
+      required: [id, account_login, account_type]
+      properties:
+        id:
+          type: integer
+        account_login:
+          type: string
+        account_type:
+          type: string
+          enum: [user, organization]
+        avatar_url:
+          type: string
+          format: uri
+    RepositorySummary:
+      type: object
+      required: [id, full_name, visibility, default_branch]
+      properties:
+        id:
+          type: integer
+          description: Canonical GitHub repository ID
+        full_name:
+          type: string
+        owner:
+          type: string
+        visibility:
+          type: string
+          enum: [public, private]
+        default_branch:
+          type: string
+        description:
+          type: string
+          nullable: true
+        html_url:
+          type: string
+          format: uri
+    PaginatedRepositories:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RepositorySummary"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # --------------------------------------------------------------- projects
+    Project:
+      type: object
+      required: [id, name, source_provider, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        name:
+          type: string
+        source_provider:
+          $ref: "#/components/schemas/SourceProvider"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        github_connection:
+          allOf:
+            - $ref: "#/components/schemas/GitHubConnection"
+          nullable: true
+        latest_snapshot:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Snapshot"
+        latest_analysis:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/AnalysisRun"
+    GitHubConnection:
+      type: object
+      required: [installation_id, repository_id, full_name, ref, connected_at]
+      properties:
+        installation_id:
+          type: integer
+        repository_id:
+          type: integer
+        full_name:
+          type: string
+        ref:
+          type: string
+        visibility:
+          type: string
+          enum: [public, private]
+        connected_at:
+          $ref: "#/components/schemas/Timestamp"
+    PaginatedProjects:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # -------------------------------------------------------------- snapshots
+    Snapshot:
+      type: object
+      required: [id, project_id, provider, created_at, content_hash]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        project_id:
+          $ref: "#/components/schemas/ObjectId"
+        provider:
+          $ref: "#/components/schemas/SourceProvider"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        content_hash:
+          type: string
+          description: Snapshot content digest (immutable provenance)
+        github_provenance:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/GitHubProvenance"
+        file_count:
+          type: integer
+    GitHubProvenance:
+      type: object
+      required: [repository_id, full_name, ref, commit_sha, imported_at]
+      properties:
+        repository_id:
+          type: integer
+        full_name:
+          type: string
+        ref:
+          type: string
+        commit_sha:
+          type: string
+        imported_at:
+          $ref: "#/components/schemas/Timestamp"
+    PaginatedSnapshots:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Snapshot"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # -------------------------------------------------------------- analyses
+    AnalysisRun:
+      type: object
+      required: [id, snapshot_id, state, created_at, graph_schema_version]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        snapshot_id:
+          $ref: "#/components/schemas/ObjectId"
+        state:
+          $ref: "#/components/schemas/AnalysisState"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        started_at:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+        finished_at:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+        flowlens_version:
+          type: string
+        graph_schema_version:
+          type: string
+        python_file_count:
+          type: integer
+        symbol_count:
+          type: integer
+        edge_count:
+          type: integer
+        diagnostics_summary:
+          $ref: "#/components/schemas/DiagnosticsSummary"
+        error_code:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/ErrorCode"
+    DiagnosticsSummary:
+      type: object
+      description: Counts only; detailed diagnostics are fetched per resource.
+      properties:
+        syntax_errors:
+          type: integer
+        unresolved_references:
+          type: integer
+        ambiguous_references:
+          type: integer
+        skipped_files:
+          type: integer
+    PaginatedSymbols:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Symbol"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    # ---------------------------------------------------------------- symbols
+    SourceLocation:
+      type: object
+      required: [start_line, end_line]
+      properties:
+        start_line:
+          type: integer
+        end_line:
+          type: integer
+        start_column:
+          type: integer
+        end_column:
+          type: integer
+    Symbol:
+      type: object
+      required: [id, kind, name, qualified_name, file_path]
+      properties:
+        id:
+          type: string
+          description: Stable, collision-safe symbol ID within the analysis
+        kind:
+          $ref: "#/components/schemas/NodeKind"
+        name:
+          type: string
+        qualified_name:
+          type: string
+          description: e.g. `package.module:function_name` or `package.module:Class.method`
+        file_path:
+          type: string
+          description: Snapshot-relative path; never a server-absolute path
+        location:
+          $ref: "#/components/schemas/SourceLocation"
+        parent_id:
+          type: string
+          nullable: true
+
+    # ------------------------------------------------------------------ graph
+    GraphNodeMetrics:
+      type: object
+      required: [in_degree, out_degree]
+      properties:
+        in_degree:
+          type: integer
+        out_degree:
+          type: integer
+        upstream_reachable:
+          type: integer
+          description: Reachable dependents count
+        downstream_reachable:
+          type: integer
+    GraphNode:
+      allOf:
+        - $ref: "#/components/schemas/Symbol"
+        - type: object
+          properties:
+            metrics:
+              $ref: "#/components/schemas/GraphNodeMetrics"
+            coverage_status:
+              $ref: "#/components/schemas/CoverageStatus"
+    EdgeEvidence:
+      type: object
+      required: [file_path, line]
+      properties:
+        file_path:
+          type: string
+        line:
+          type: integer
+        column:
+          type: integer
+        expression:
+          type: string
+          description: Source expression that produced the edge (bounded length)
+    GraphEdge:
+      type: object
+      required: [id, source, target, kind, confidence, evidence]
+      properties:
+        id:
+          type: string
+        source:
+          type: string
+        target:
+          type: string
+        kind:
+          $ref: "#/components/schemas/EdgeKind"
+        confidence:
+          $ref: "#/components/schemas/Confidence"
+        resolver:
+          type: string
+          description: Resolver/strategy name that produced the edge
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EdgeEvidence"
+          description: At least one evidence location per dependency edge
+    GraphResponse:
+      type: object
+      required: [analysis_id, view, nodes, edges, truncated]
+      properties:
+        analysis_id:
+          $ref: "#/components/schemas/ObjectId"
+        view:
+          type: string
+          enum: [module, class, function]
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdge"
+        truncated:
+          type: boolean
+        total_nodes:
+          type: integer
+        total_edges:
+          type: integer
+        unresolved_count:
+          type: integer
+          description: Unresolved/ambiguous references recorded in diagnostics, shown in the UI
+
+    # ------------------------------------------------------------------ impact
+    ImpactRequest:
+      type: object
+      required: [target_ids, direction]
+      properties:
+        target_ids:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+          description: One or more target symbol/node IDs
+        direction:
+          $ref: "#/components/schemas/ImpactDirection"
+        max_depth:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+    ImpactNode:
+      type: object
+      required: [node_id, kind, qualified_name, direct, min_hops, attributed_to]
+      properties:
+        node_id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/NodeKind"
+        qualified_name:
+          type: string
+        direct:
+          type: boolean
+          description: Direct (hop distance 1) vs transitive
+        min_hops:
+          type: integer
+        paths:
+          type: array
+          description: Representative shortest paths; each is a valid ordered sequence of edge IDs
+          items:
+            type: object
+            required: [edges]
+            properties:
+              edges:
+                type: array
+                minItems: 1
+                items:
+                  type: string
+                  description: Edge ID
+        attributed_to:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Target IDs that contributed to this impact
+    RiskScore:
+      type: object
+      required: [score, version, coverage_included, factors]
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        version:
+          type: string
+          description: Versioned scoring configuration
+        coverage_included:
+          type: boolean
+          description: False when no coverage data was available; weights are renormalized and the fact is disclosed
+        factors:
+          type: array
+          items:
+            type: object
+            required: [key, label, weight, normalized_value, included]
+            properties:
+              key:
+                type: string
+                enum:
+                  - upstream_reachable_dependents
+                  - in_degree_centrality
+                  - downstream_breadth
+                  - public_entry_point
+                  - coverage_deficiency
+              label:
+                type: string
+              weight:
+                type: number
+                description: Normalized weight actually applied
+              raw_value:
+                type: number
+              normalized_value:
+                type: number
+              included:
+                type: boolean
+              description:
+                type: string
+        caveats:
+          type: array
+          items:
+            type: string
+    ImpactResult:
+      type: object
+      required: [analysis_id, targets, direction, impacted, risk, warnings]
+      properties:
+        analysis_id:
+          $ref: "#/components/schemas/ObjectId"
+        targets:
+          type: array
+          items:
+            type: object
+            required: [node_id, qualified_name]
+            properties:
+              node_id:
+                type: string
+              qualified_name:
+                type: string
+        direction:
+          $ref: "#/components/schemas/ImpactDirection"
+        max_depth:
+          type: integer
+        impacted:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImpactNode"
+        truncated:
+          type: boolean
+        risk:
+          $ref: "#/components/schemas/RiskScore"
+        warnings:
+          type: array
+          items:
+            type: string
+        coverage_summary:
+          nullable: true
+          allOf:
+            - $ref: "#/components/schemas/CoverageSummary"
+
+    # -------------------------------------------------------------------- diff
+    ChangedSymbol:
+      type: object
+      required: [symbol_id, qualified_name, change_type]
+      properties:
+        symbol_id:
+          type: string
+        qualified_name:
+          type: string
+        change_type:
+          type: string
+          enum: [added, modified, deleted]
+    DiffFile:
+      type: object
+      required: [path, change_type, changed_line_count]
+      properties:
+        path:
+          type: string
+        change_type:
+          type: string
+          enum: [added, modified, deleted]
+        changed_line_count:
+          type: integer
+        mapped_symbols:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangedSymbol"
+        unmapped_line_count:
+          type: integer
+        unmapped_reason:
+          type: string
+          description: e.g. lines outside any symbol span (module-level changes)
+    DiffResult:
+      type: object
+      required: [analysis_id, files, combined_impact, warnings]
+      properties:
+        analysis_id:
+          $ref: "#/components/schemas/ObjectId"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiffFile"
+        combined_impact:
+          $ref: "#/components/schemas/ImpactResult"
+        warnings:
+          type: array
+          items:
+            type: string
+
+    # ---------------------------------------------------------------- coverage
+    CoverageSummary:
+      type: object
+      required: [covered, partially_covered, uncovered, unknown]
+      properties:
+        covered:
+          type: integer
+        partially_covered:
+          type: integer
+        uncovered:
+          type: integer
+        unknown:
+          type: integer
+    CoverageResult:
+      type: object
+      required: [analysis_id, summary, warnings]
+      properties:
+        analysis_id:
+          $ref: "#/components/schemas/ObjectId"
+        summary:
+          $ref: "#/components/schemas/CoverageSummary"
+        unmatched_file_count:
+          type: integer
+          description: Coverage files that could not be matched to snapshot paths
+        warnings:
+          type: array
+          items:
+            type: string
+
+    # ----------------------------------------------------------------- report
+    ReportInfo:
+      type: object
+      required: [id, analysis_id, format, created_at, filename]
+      properties:
+        id:
+          $ref: "#/components/schemas/ObjectId"
+        analysis_id:
+          $ref: "#/components/schemas/ObjectId"
+        format:
+          $ref: "#/components/schemas/ReportFormat"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        filename:
+          type: string
+          description: Download filename for the report
