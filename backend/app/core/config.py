@@ -35,10 +35,22 @@ class Settings(BaseSettings):
     github_app_client_secret: str = ""
     github_oauth_base_url: str = "https://github.com"
     github_api_base_url: str = "https://api.github.com"
+    # Installation/archive side (github.com only; no GHES support in the MVP).
+    github_app_id: int = 0
+    github_app_slug: str = ""
+    # PEM private key of the GitHub App (server-only secret, never logged).
+    github_app_private_key: str = ""
+    github_archive_base_url: str = "https://codeload.github.com"
 
     # --- Database / storage ---
     database_url: str = "sqlite:///./flowlens.db"
     storage_root: str = "./storage"
+    # Ingestion resource limits (applied to GitHub archives; reused for ZIP
+    # uploads in a later phase).
+    snapshot_max_file_count: int = 20_000
+    snapshot_max_uncompressed_bytes: int = 256 * 1024 * 1024
+    snapshot_max_archive_bytes: int = 200 * 1024 * 1024
+    snapshot_download_timeout_seconds: float = 60.0
 
     @property
     def is_production(self) -> bool:
@@ -57,6 +69,29 @@ class Settings(BaseSettings):
     @property
     def github_oauth_callback_url(self) -> str:
         return f"{self.backend_public_url}/api/v1/auth/github/callback"
+
+    @property
+    def github_install_callback_url(self) -> str:
+        return f"{self.backend_public_url}/api/v1/github/install/callback"
+
+    def _host_of(self, url: str) -> str:
+        from urllib.parse import urlparse
+
+        return urlparse(url).hostname or ""
+
+    @property
+    def github_api_host(self) -> str:
+        return self._host_of(self.github_api_base_url)
+
+    @property
+    def github_archive_host(self) -> str:
+        return self._host_of(self.github_archive_base_url)
+
+    @property
+    def github_allowed_hosts(self) -> set[str]:
+        """Strict SSRF allowlist: only documented GitHub API/archive hosts."""
+        hosts = {self.github_api_host, self.github_archive_host, self._host_of(self.github_oauth_base_url)}
+        return {host for host in hosts if host}
 
 
 def get_settings() -> Settings:

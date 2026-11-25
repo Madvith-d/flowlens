@@ -32,6 +32,10 @@ class Project(Base, TimestampMixin):
     github_repository_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     github_full_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     github_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Canonical visibility reported by GitHub at connection time; never used as
+    # an access decision — access is always re-verified server-side.
+    github_visibility: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    github_default_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
     disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

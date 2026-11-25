@@ -12,10 +12,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.github import router as github_router
+from app.api.v1.projects import router as projects_router
 from app.core.csrf import OriginValidationMiddleware
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import RequestContextMiddleware
+from app.services.github.app_client import HttpxGitHubAppClient
 from app.services.github.client import HttpxGitHubOAuthProvider
 
 logger = logging.getLogger("flowlens.main")
@@ -25,6 +28,7 @@ def create_app(
     settings=None,
     session_factory: sessionmaker | None = None,
     github_provider=None,
+    github_app_client=None,
 ) -> FastAPI:
     from app.core.config import Settings, cached_settings
 
@@ -39,6 +43,8 @@ def create_app(
         engine = None
     if github_provider is None:
         github_provider = HttpxGitHubOAuthProvider(settings)
+    if github_app_client is None:
+        github_app_client = HttpxGitHubAppClient(settings)
 
     setup_logging()
 
@@ -50,6 +56,7 @@ def create_app(
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.github_provider = github_provider
+    app.state.github_app_client = github_app_client
     app.state.engine = engine
 
     # Middleware order matters: request IDs must wrap everything; origin checks
@@ -70,6 +77,8 @@ def create_app(
 
     register_exception_handlers(app)
     app.include_router(auth_router)
+    app.include_router(github_router)
+    app.include_router(projects_router)
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
