@@ -9,8 +9,13 @@ from app.models.auth import UserSession
 from app.models.user import User
 from app.repositories.auth import OAuthStateRepository, UserSessionRepository
 from app.repositories.github import GitHubCredentialRepository
+from app.repositories.installations import GitHubInstallationRepository
+from app.repositories.projects import ProjectRepository, SnapshotRepository
 from app.repositories.users import UserRepository
-from app.services.auth.service import AuthService
+from app.services.auth.service import AUTH_REQUIRED, AuthService
+from app.services.github.service import GitHubInstallationService
+from app.services.ingestion.storage import SnapshotStorage
+from app.services.projects.service import ProjectService
 
 
 def get_settings(request: Request):
@@ -58,3 +63,63 @@ class AuthBundle:
 
 def get_auth_bundle(request: Request, db: Session = Depends(get_db)) -> AuthBundle:
     return AuthBundle(request, db)
+
+
+def get_current_user(bundle: AuthBundle = Depends(get_auth_bundle)) -> User:
+    """Dependency for authenticated endpoints; raises the AUTH_REQUIRED envelope."""
+    resolved = bundle.resolve_session()
+    if resolved is None:
+        raise AUTH_REQUIRED
+    _session, user = resolved
+    return user
+
+
+class GitHubBundle:
+    """Request-scoped wiring for installation/repository endpoints."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.installation_service = GitHubInstallationService(
+            settings=self.settings,
+            app_client=request.app.state.github_app_client,
+            state_repo=OAuthStateRepository(db),
+            credential_repo=GitHubCredentialRepository(db),
+            installation_repo=GitHubInstallationRepository(db),
+        )
+
+
+def get_github_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> GitHubBundle:
+    return GitHubBundle(request, db, user)
+
+
+class ProjectsBundle:
+    """Request-scoped wiring for project endpoints."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = ProjectService(
+            settings=self.settings,
+            app_client=request.app.state.github_app_client,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            credential_repo=GitHubCredentialRepository(db),
+            storage=SnapshotStorage(self.settings),
+        )
+
+
+def get_projects_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> ProjectsBundle:
+    return ProjectsBundle(request, db, user)

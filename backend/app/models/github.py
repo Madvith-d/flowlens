@@ -37,7 +37,7 @@ class GitHubInstallation(Base, TimestampMixin):
         UniqueConstraint("installation_id", name="uq_github_installations_installation_id"),
     )
 
-    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_object_id)
     installation_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     account_login: Mapped[str] = mapped_column(String(255), nullable=False)
     account_type: Mapped[str] = mapped_column(String(32), nullable=False)  # user | organization
