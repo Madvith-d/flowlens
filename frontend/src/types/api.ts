@@ -197,3 +197,33 @@ export interface PaginatedSnapshots {
   items: Snapshot[];
   pagination: Pagination;
 }
+
+// ----------------------------------------------------------------- symbols
+
+/** `SourceLocation` schema — snapshot-relative source span. */
+export interface SourceLocation {
+  start_line: number;
+  end_line: number;
+  start_column?: number;
+  end_column?: number;
+}
+
+/**
+ * `Symbol` schema — a module/class/function/method record of an analysis.
+ * (`Symbol` is shadowed in TS; the contract schema name is noted here.)
+ */
+export interface Symbol {
+  id: string;
+  kind: NodeKind;
+  name: string;
+  qualified_name: string;
+  file_path: string;
+  location?: SourceLocation;
+  parent_id?: string | null;
+}
+
+/** `PaginatedSymbols` schema. */
+export interface PaginatedSymbols {
+  items: Symbol[];
+  pagination: Pagination;
+}

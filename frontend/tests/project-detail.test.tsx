@@ -111,6 +111,11 @@ describe("project detail page", () => {
     renderPage();
 
     expect(await screen.findByText("Service A")).toBeInTheDocument();
+    // Workspace entry point (Phase 4B) targets the analysis workspace.
+    expect(screen.getByRole("link", { name: /open workspace/i })).toHaveAttribute(
+      "href",
+      "/projects/p1/workspace"
+    );
     expect(screen.getByText("Source origin")).toBeInTheDocument();
     expect(screen.getByText("Resolved commit")).toBeInTheDocument();
     // Repository + ref appear in both the origin card and the connection card.

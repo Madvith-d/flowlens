@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, LayoutDashboard, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -65,8 +65,8 @@ export default function ProjectDetailPage() {
         <Alert variant="success">
           <AlertTitle>Project created</AlertTitle>
           <AlertDescription>
-            Its first immutable source snapshot is stored. Analyze it from the workspace
-            once analysis actions are available.
+            Its first immutable source snapshot is stored. Open the workspace to
+            analyze it and browse its symbols.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -100,6 +100,12 @@ export default function ProjectDetailPage() {
                 <AnalysisStateBadge state={projectData.latest_analysis?.state} />
               </div>
             </div>
+            <Button asChild size="sm">
+              <Link href={`/projects/${projectId}/workspace`}>
+                <LayoutDashboard aria-hidden="true" className="size-4" />
+                Open workspace
+              </Link>
+            </Button>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
