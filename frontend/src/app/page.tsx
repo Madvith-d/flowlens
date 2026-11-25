@@ -1,8 +1,6 @@
+import { redirect } from "next/navigation";
+
+/** `/` always routes into the authenticated area; guards handle sign-in. */
 export default function Home() {
-  return (
-    <main>
-      <h1>FlowLens</h1>
-      <p>Code dependency and change impact visualizer.</p>
-    </main>
-  );
+  redirect("/dashboard");
 }
