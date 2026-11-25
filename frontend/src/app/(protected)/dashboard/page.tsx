@@ -1,29 +1,12 @@
 "use client";
 
-import { AccountCard } from "@/components/layout/account-card";
-import { EmptyState } from "@/components/ui/states";
-import { useSession } from "@/features/auth/session-provider";
+import { ProjectsDashboard } from "@/features/projects/components/projects-dashboard";
 
+/**
+ * Authenticated dashboard (Phase 3B): the current user's projects with
+ * provider badges, repository/ref metadata, latest snapshot, and analysis
+ * status, plus the create-project entry point.
+ */
 export default function DashboardPage() {
-  const { user } = useSession();
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">
-          Welcome{user ? `, @${user.github_login}` : ""}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Your projects and analyses will appear here.
-        </p>
-      </div>
-
-      {user ? <AccountCard user={user} /> : null}
-
-      <EmptyState
-        title="No projects yet"
-        description="Project creation from a ZIP upload or a GitHub repository arrives in the next milestone. Your account and session are fully working."
-      />
-    </div>
-  );
+  return <ProjectsDashboard />;
 }
