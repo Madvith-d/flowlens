@@ -51,6 +51,17 @@ class Settings(BaseSettings):
     snapshot_max_uncompressed_bytes: int = 256 * 1024 * 1024
     snapshot_max_archive_bytes: int = 200 * 1024 * 1024
     snapshot_download_timeout_seconds: float = 60.0
+    # Per-file limits (ZIP entries and Python source files considered for parsing).
+    snapshot_max_file_bytes: int = 5 * 1024 * 1024
+    # Reject archives whose uncompressed:compressed ratio exceeds this (zip bombs).
+    snapshot_max_compression_ratio: int = 200
+    # Static analysis bounds (kept deterministic and bounded; never execute code).
+    analysis_max_symbols: int = 100_000
+    analysis_max_calls_per_symbol: int = 2_000
+
+    # --- Versions recorded on analysis runs ---
+    flowlens_version: str = "0.1.0"
+    graph_schema_version: str = "1"
 
     @property
     def is_production(self) -> bool:

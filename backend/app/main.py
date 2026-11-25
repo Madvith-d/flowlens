@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
+from app.api.v1.analyses import router as analyses_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.github import router as github_router
 from app.api.v1.projects import router as projects_router
@@ -79,6 +80,7 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(github_router)
     app.include_router(projects_router)
+    app.include_router(analyses_router)
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:

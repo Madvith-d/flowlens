@@ -30,6 +30,7 @@ from app.services.ingestion.archive import (
     extract_tar_gz,
 )
 from app.services.ingestion.storage import SnapshotStorage
+from app.services.ingestion.zip_archive import extract_zip, looks_like_zip
 
 logger = logging.getLogger("flowlens.projects")
 
@@ -217,6 +218,58 @@ class ProjectService:
             "github connection disconnected",
             extra={"context": {"project_id": project.id}},
         )
+
+    # --------------------------------------------------------------- uploads
+    def create_from_upload(
+        self, user: User, *, archive_bytes: bytes, filename: str, name: str | None
+    ) -> Project:
+        """Create a project + immutable snapshot from an uploaded ZIP archive.
+
+        The archive is inspected and extracted with strict limits; its content
+        is never executed or imported.
+        """
+        if not looks_like_zip(archive_bytes):
+            raise UPLOAD_INVALID
+        project = self._projects.create(
+            user_id=user.id,
+            name=(name or filename.rsplit("/", 1)[-1].rsplit(".zip", 1)[0] or "Uploaded project")[:200],
+            source_provider="upload",
+        )
+        snapshot = self._snapshots.create(
+            project_id=project.id,
+            provider="upload",
+            content_hash=archive_content_hash(archive_bytes),
+            file_count=0,
+        )
+        try:
+            snapshot_dir = self._storage.snapshot_dir(snapshot.id)
+            result = extract_zip(
+                archive_bytes,
+                snapshot_dir,
+                max_file_count=self._settings.snapshot_max_file_count,
+                max_total_bytes=self._settings.snapshot_max_uncompressed_bytes,
+                max_file_bytes=self._settings.snapshot_max_file_bytes,
+                max_compression_ratio=self._settings.snapshot_max_compression_ratio,
+            )
+        except (UnsafeArchiveError, OSError) as exc:
+            logger.info(
+                "upload rejected",
+                extra={"context": {"error": type(exc).__name__}},
+            )
+            raise UPLOAD_INVALID from exc
+        snapshot.file_count = len(result.stored_paths)
+        self._snapshots.flush()
+        logger.info(
+            "upload snapshot stored",
+            extra={
+                "context": {
+                    "snapshot_id": snapshot.id,
+                    "files": len(result.stored_paths),
+                    "skipped": len(result.skipped_paths),
+                }
+            },
+        )
+        return project
 
     # ------------------------------------------------------------------ queries
     def create_bare(self, user: User, name: str) -> Project:

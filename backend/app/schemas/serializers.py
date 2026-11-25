@@ -76,7 +76,11 @@ def github_connection_view(project: Project) -> dict | None:
     }
 
 
-def project_view(project: Project, latest_snapshot: SourceSnapshot | None = None) -> dict:
+def project_view(
+    project: Project,
+    latest_snapshot: SourceSnapshot | None = None,
+    latest_analysis: dict | None = None,
+) -> dict:
     return {
         "id": project.id,
         "name": project.name,
@@ -85,5 +89,42 @@ def project_view(project: Project, latest_snapshot: SourceSnapshot | None = None
         "updated_at": project.updated_at.isoformat() if project.updated_at else None,
         "github_connection": github_connection_view(project),
         "latest_snapshot": snapshot_view(latest_snapshot) if latest_snapshot else None,
-        "latest_analysis": None,  # populated in later analysis phases
+        "latest_analysis": latest_analysis,
+    }
+
+
+def analysis_view(run, diagnostics_summary: dict | None = None) -> dict:
+    """AnalysisRun contract payload (state, counters, diagnostics summary)."""
+    return {
+        "id": run.id,
+        "snapshot_id": run.snapshot_id,
+        "state": run.state,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "flowlens_version": run.flowlens_version,
+        "graph_schema_version": run.graph_schema_version,
+        "python_file_count": run.python_file_count,
+        "symbol_count": run.symbol_count,
+        "edge_count": run.edge_count,
+        "diagnostics_summary": diagnostics_summary or {},
+        "error_code": run.error_code,
+    }
+
+
+def symbol_view(symbol) -> dict:
+    """Symbol contract payload with snapshot-relative source locations."""
+    return {
+        "id": symbol.id,
+        "kind": symbol.kind,
+        "name": symbol.name,
+        "qualified_name": symbol.qualified_name,
+        "file_path": symbol.file_path,
+        "location": {
+            "start_line": symbol.start_line,
+            "end_line": symbol.end_line,
+            "start_column": symbol.start_column,
+            "end_column": symbol.end_column,
+        },
+        "parent_id": symbol.parent_id,
     }

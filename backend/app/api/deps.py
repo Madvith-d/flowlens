@@ -8,10 +8,18 @@ from sqlalchemy.orm import Session
 from app.models.auth import UserSession
 from app.models.user import User
 from app.repositories.auth import OAuthStateRepository, UserSessionRepository
+from app.repositories.analysis import (
+    AnalysisRepository,
+    DiagnosticRepository,
+    SourceFileRepository,
+    SymbolCallRepository,
+    SymbolRepository,
+)
 from app.repositories.github import GitHubCredentialRepository
 from app.repositories.installations import GitHubInstallationRepository
 from app.repositories.projects import ProjectRepository, SnapshotRepository
 from app.repositories.users import UserRepository
+from app.services.analysis.service import AnalysisService
 from app.services.auth.service import AUTH_REQUIRED, AuthService
 from app.services.github.service import GitHubInstallationService
 from app.services.ingestion.storage import SnapshotStorage
@@ -115,6 +123,17 @@ class ProjectsBundle:
             credential_repo=GitHubCredentialRepository(db),
             storage=SnapshotStorage(self.settings),
         )
+        self.analysis_service = AnalysisService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            source_file_repo=SourceFileRepository(db),
+            symbol_repo=SymbolRepository(db),
+            call_repo=SymbolCallRepository(db),
+            diagnostic_repo=DiagnosticRepository(db),
+            storage=SnapshotStorage(self.settings),
+        )
 
 
 def get_projects_bundle(
@@ -123,3 +142,32 @@ def get_projects_bundle(
     db: Session = Depends(get_db),
 ) -> ProjectsBundle:
     return ProjectsBundle(request, db, user)
+
+
+class AnalysisBundle:
+    """Request-scoped wiring for analysis endpoints."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = AnalysisService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            source_file_repo=SourceFileRepository(db),
+            symbol_repo=SymbolRepository(db),
+            call_repo=SymbolCallRepository(db),
+            diagnostic_repo=DiagnosticRepository(db),
+            storage=SnapshotStorage(self.settings),
+        )
+
+
+def get_analysis_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> AnalysisBundle:
+    return AnalysisBundle(request, db, user)

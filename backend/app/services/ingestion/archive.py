@@ -42,12 +42,12 @@ def archive_content_hash(archive_bytes: bytes) -> str:
     return hashlib.sha256(archive_bytes).hexdigest()
 
 
-def _is_excluded(normalized: str) -> bool:
+def is_excluded(normalized: str) -> bool:
     parts = PurePosixPath(normalized).parts
     return any(part in DEFAULT_EXCLUDED_PARTS for part in parts)
 
 
-def _validate_entry_name(name: str) -> str | None:
+def validate_entry_name(name: str) -> str | None:
     """Return a normalized, safe relative path or None when skipped.
 
     Rejects: absolute paths, `..` traversal, backslashes, NUL bytes,
@@ -95,7 +95,7 @@ def extract_tar_gz(
         raise UnsafeArchiveError("archive is not a valid tar.gz stream") from exc
     with tar:
         for member in tar:
-            normalized = _validate_entry_name(member.name)
+            normalized = validate_entry_name(member.name)
             if normalized is None:
                 result.skipped_paths.append(member.name)
                 continue
@@ -106,7 +106,7 @@ def extract_tar_gz(
             target_path = os.path.realpath(os.path.join(dest_root, normalized))
             if target_path != dest_root and not target_path.startswith(dest_root + os.sep):
                 raise UnsafeArchiveError("archive entry escapes the snapshot directory")
-            if _is_excluded(normalized):
+            if is_excluded(normalized):
                 result.skipped_paths.append(member.name)
                 continue
             if member.isdir():

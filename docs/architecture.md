@@ -59,6 +59,34 @@ changes must be made there first, coordinated between contributors.
 5. Diff/coverage data can be attached to an analysis; reports export the
    results as Markdown.
 
+## Ingestion and static analysis (implemented: Phases 3A + 4A)
+
+- **Snapshots are provider-agnostic.** GitHub imports (`services/github`) and ZIP
+  uploads (`services/ingestion/zip_archive.py`) both produce the same internal
+  representation: an immutable `SourceSnapshot` row plus a snapshot directory
+  under `STORAGE_ROOT/snapshots/{snapshot_id}/`. Analysis code never branches on
+  the provider.
+- **Extraction is bounded and safe.** Archive entries are normalized and
+  validated (no absolute paths, no `..`, no links, no duplicates), then written
+  with file-count, per-file, total-uncompressed, and compression-ratio limits.
+  Excluded directories (`.git`, `__pycache__`, virtualenvs, …) are skipped and
+  reported. Uploaded/GitHub source is never imported, executed, or installed.
+- **Analysis is per-run and immutable.** `POST /snapshots/{id}/analyses` creates
+  an `AnalysisRun` (`queued` → `running` → `completed` /
+  `completed_with_warnings` / `failed`) and parses every `*.py` file with the
+  standard library `ast` module: modules, classes (bases), functions, async
+  functions, methods, nested definitions, decorators, imports, and call
+  expressions, each with file-relative line/column spans.
+- **Symbols are deterministic within a run.** IDs hash the structural key
+  (analysis, file, kind, qualified name, span), qualified names use
+  `module:Class.method` / `module:function` / `module:function.nested`, and
+  catalogue queries are deterministically ordered by
+  `(file_path, start_line, start_column, qualified_name)`.
+- **Diagnostics, not guesses.** Syntax errors, encoding errors, oversized files,
+  and the symbol budget are recorded as diagnostics per file; a broken file never
+  stops the rest of the snapshot from being analysed. Call expressions are stored
+  as expressions only — resolution (with evidence and confidence) is Phase 5A.
+
 ## Security invariants
 
 - Analyzed source is never executed or imported.

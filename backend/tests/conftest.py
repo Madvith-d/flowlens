@@ -2,6 +2,7 @@
 
 import io
 import tarfile
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -58,6 +59,52 @@ def build_repo_tarball(files: dict[str, bytes] | None = None) -> bytes:
             info.size = len(data)
             info.mtime = 1_700_000_000
             tar.addfile(info, io.BytesIO(data))
+    return archive.getvalue()
+
+
+# Sample Python project used by upload/analysis tests (also mirrored through
+# the mocked GitHub import to prove both providers share one representation).
+SAMPLE_PROJECT_FILES: dict[str, bytes] = {
+    "__init__.py": b"",
+    "app/__init__.py": b"",
+    "app/main.py": (
+        b"import os\n"
+        b"from app.service import Service, helper as help_fn\n"
+        b"\n"
+        b"VALUE = 1\n"
+        b"\n"
+        b"def main(argv=None):\n"
+        b"    service = Service()\n"
+        b"    return help_fn(service.run(argv))\n"
+    ),
+    "app/service.py": (
+        b"import json\n"
+        b"\n"
+        b"def helper(value):\n"
+        b"    return value\n"
+        b"\n"
+        b"class Base:\n"
+        b"    def ping(self):\n"
+        b"        return 1\n"
+        b"\n"
+        b"class Service(Base):\n"
+        b"    def run(self, argv=None):\n"
+        b"        def inner():\n"
+        b"            return json.dumps({'argv': argv})\n"
+        b"        return inner()\n"
+    ),
+    "app/broken.py": b"def nope(:\n    pass\n",
+    "README.md": b"# sample\n",
+    ".git/config": b"should be excluded\n",
+}
+
+
+def build_zip(files: dict[str, bytes]) -> bytes:
+    """In-memory ZIP fixture preserving entry order (for malicious cases)."""
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for name, data in files.items():
+            bundle.writestr(name, data)
     return archive.getvalue()
 
 

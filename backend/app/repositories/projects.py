@@ -85,6 +85,9 @@ class ProjectRepository(BaseRepository):
 
 
 class SnapshotRepository(BaseRepository):
+    def get(self, snapshot_id: str) -> SourceSnapshot | None:
+        return self.session.get(SourceSnapshot, snapshot_id)
+
     def create(
         self,
         project_id: str,
