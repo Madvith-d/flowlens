@@ -66,3 +66,132 @@ export interface Pagination {
   total: number;
   total_pages?: number;
 }
+
+// -------------------------------------------------------------------- enums
+
+/** `SourceProvider` schema. */
+export type SourceProvider = "github" | "upload";
+
+/** `AnalysisState` schema. */
+export type AnalysisState =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_warnings"
+  | "failed";
+
+/** `NodeKind` schema (module covers file/module granularity). */
+export type NodeKind = "module" | "class" | "function" | "method";
+
+// ------------------------------------------------------------------ github
+
+/** `GitHubInstallation` schema — an installation accessible to the user. */
+export interface GitHubInstallation {
+  id: number;
+  account_login: string;
+  account_type: "user" | "organization";
+  avatar_url?: string;
+}
+
+/** `RepositorySummary` schema. */
+export interface RepositorySummary {
+  id: number;
+  full_name: string;
+  visibility: "public" | "private";
+  default_branch: string;
+  owner?: string;
+  description?: string | null;
+  html_url?: string;
+}
+
+/** `GET /api/v1/github/installations` response. */
+export interface GitHubInstallationList {
+  items: GitHubInstallation[];
+}
+
+/** `PaginatedRepositories` schema. */
+export interface PaginatedRepositories {
+  items: RepositorySummary[];
+  pagination: Pagination;
+}
+
+// ---------------------------------------------------------------- projects
+
+/** `GitHubConnection` schema — recorded repository link of a project. */
+export interface GitHubConnection {
+  installation_id: number;
+  repository_id: number;
+  full_name: string;
+  ref: string;
+  connected_at: Timestamp;
+  visibility?: "public" | "private";
+}
+
+/** `DiagnosticsSummary` schema — counts only. */
+export interface DiagnosticsSummary {
+  syntax_errors?: number;
+  unresolved_references?: number;
+  ambiguous_references?: number;
+  skipped_files?: number;
+}
+
+/** `AnalysisRun` schema — latest analysis state/summary of a project. */
+export interface AnalysisRun {
+  id: ObjectId;
+  snapshot_id: ObjectId;
+  state: AnalysisState;
+  created_at: Timestamp;
+  started_at?: Timestamp | null;
+  finished_at?: Timestamp | null;
+  flowlens_version?: string;
+  graph_schema_version: string;
+  python_file_count?: number;
+  symbol_count?: number;
+  edge_count?: number;
+  diagnostics_summary?: DiagnosticsSummary;
+  error_code?: ErrorCode | string | null;
+}
+
+/** `GitHubProvenance` schema — immutable source origin of a snapshot. */
+export interface GitHubProvenance {
+  repository_id: number;
+  full_name: string;
+  ref: string;
+  commit_sha: string;
+  imported_at: Timestamp;
+}
+
+/** `Snapshot` schema — immutable source snapshot. */
+export interface Snapshot {
+  id: ObjectId;
+  project_id: ObjectId;
+  provider: SourceProvider;
+  created_at: Timestamp;
+  content_hash: string;
+  github_provenance?: GitHubProvenance | null;
+  file_count?: number;
+}
+
+/** `Project` schema. */
+export interface Project {
+  id: ObjectId;
+  name: string;
+  source_provider: SourceProvider;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  github_connection?: GitHubConnection | null;
+  latest_snapshot?: Snapshot | null;
+  latest_analysis?: AnalysisRun | null;
+}
+
+/** `PaginatedProjects` schema. */
+export interface PaginatedProjects {
+  items: Project[];
+  pagination: Pagination;
+}
+
+/** `PaginatedSnapshots` schema. */
+export interface PaginatedSnapshots {
+  items: Snapshot[];
+  pagination: Pagination;
+}

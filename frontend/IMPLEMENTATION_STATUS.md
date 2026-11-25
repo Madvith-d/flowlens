@@ -1,118 +1,136 @@
 # IMPLEMENTATION_STATUS — Frontend (Sameeksha)
 
-**Branch:** `sam`
-**Phase:** 2B — Frontend foundation and authentication UX
-**Ownership:** `frontend/**` only. No files in `backend/**` or `contracts/openapi.yaml` were modified.
+**Branch:** `sam` (based on `main` after Phase 2A backend merge; Phase 2B already merged)
+**Phase:** 3B complete — Project dashboard and source creation UX
+**Ownership:** `frontend/**` only. No files in `backend/**` or `contracts/openapi.yaml` were modified in this phase.
 
-## Completed in this session
+## Completed in this session (Phase 3B)
 
-- Next.js App Router structure with Tailwind CSS theme (design tokens, focus-visible
-  rings, container widths) and a shadcn/ui-style component library:
-  Button, Card, Alert, Input/Label, Badge, Skeleton/Spinner, Dialog,
-  DropdownMenu, Avatar, EmptyState, ErrorState, plus `sonner` toasts wired in
-  the root layout.
-- Typed API layer kept in sync with `contracts/openapi.yaml` v0.1.0:
-  - `src/types/api.ts` — SessionState/AuthUser/error envelope/pagination types
-    mirrored from the contract (no undocumented keys).
-  - `src/lib/api-client.ts` — single client: `NEXT_PUBLIC_API_BASE_URL`,
-    `credentials: "include"` on every request, JSON/multipart bodies, 20s
-    timeout via `AbortController` (works in jsdom too), safe error
-    normalization (`ApiError`, `NetworkError`), 401 → session-expired handler
-    (`/auth/me` exempted so the signed-out check cannot loop).
-- Auth UX (Phase 2B scope):
-  - `/login` — Continue with GitHub performs a full-page navigation to
-    `GET /api/v1/auth/github/start` (never XHR); states for session-check
-    loading, signed-out, session-expired, GitHub callback failure, and
-    backend-unavailable with Reload.
-  - `SessionProvider` (`useSession`) checks `GET /api/v1/auth/me`;
-    `RequireAuth` guard renders loading skeleton / children / redirect to
-    `/login?reason=expired` / backend-unavailable error state with retry.
-  - `LogoutButton` with confirmation dialog; calls `POST /api/v1/auth/logout`;
-    navigates to `/login?reason=signed-out`; failures keep the dialog open
-    with an actionable message.
-  - Protected app shell: sticky header, user menu from safe `/auth/me` data
-    only, responsive container, skip-to-content link, analysis-caveat footer.
-  - Pages: `/` → dashboard redirect, `/dashboard`, `/settings` (account +
-    session only; GitHub connection UI arrives with Phase 3B).
-- Tests (vitest + Testing Library, mocked fetch — no MSW needed):
-  - `tests/api-client.test.ts` — credentials include, base URL/env override,
-    JSON/FormData bodies, query serialization, error envelope → ApiError
-    (code/message/request_id), non-envelope fallback message, mid-session 401
-    handler, `/auth/me` 401 exemptions, NetworkError, 204 handling (11 tests).
-  - `tests/session.test.tsx` — provider states: loading, authenticated,
-    unauthenticated redirect, backend-unavailable error + retry, logout POST,
-    refresh-after-401 without redirect loop (7 tests).
-  - `tests/login-page.test.tsx` — login states, OAuth navigation target,
-    expired/signed-out/callback-failure notices, reload on backend down,
-    no provider-token leakage in the DOM (9 tests).
-  - `tests/logout-button.test.tsx` — confirm/cancel, endpoint call +
-    navigation, backend-failure message remains visible (4 tests).
+All UI is built against the frozen `contracts/openapi.yaml` v0.1.0. Production paths call
+the real backend only; stubbed fetch/XHR responses exist exclusively inside `tests/`.
+
+### Shared foundation (added)
+
+- `src/types/api.ts` — contract types added: `SourceProvider`, `AnalysisState`, `NodeKind`,
+  `GitHubInstallation`, `RepositorySummary`, `PaginatedRepositories`, `GitHubConnection`,
+  `DiagnosticsSummary`, `AnalysisRun`, `GitHubProvenance`, `Snapshot`, `Project`,
+  `PaginatedProjects`, `PaginatedSnapshots` (mirrored from the contract, no undocumented keys).
+- `src/lib/use-async.ts` — `useAsync` data-loading hook (loading / error-message mapping /
+  reload) and a shared `errorMessage` helper; unmounted results discarded.
+- `src/lib/format.ts` — locale-explicit date/time + short-hash display helpers
+  (unknown values render as "—", never fabricated).
+- `src/components/ui/progress.tsx` — accessible progress bar; determinate mode takes only
+  measured values, omitting the value yields an honest indeterminate state.
+  Keyframes added to `src/app/globals.css`.
+
+### Features/projects
+
+- `src/features/projects/projects-service.ts` — typed wrappers: `listProjects`,
+  `getProject`, `listSnapshots`, `createProject`, `createProjectFromGithub`,
+  `refreshProject`, `disconnectGithubConnection`, and `createProjectFromUpload`
+  (XMLHttpRequest-based so real upload progress is available; `withCredentials=true`,
+  120s timeout, abort support, error envelope normalized through the shared
+  `toApiError` parser — same envelope as the fetch client).
+- Components: `ProviderBadge` (icon + text), `AnalysisStateBadge` (explicit
+  "No analysis yet" absence state), `ProjectCard`, `ProjectsDashboard`
+  (loading skeletons / error + retry / empty / paginated grid), `ZipUploadForm`
+  (client checks only the file type honestly; backend `UPLOAD_INVALID` /
+  `UPLOAD_TOO_LARGE` messages shown verbatim; real upload progress; duplicate-submission
+  guard; retry keeps the selection; cancel during body upload), `DisconnectDialog`
+  (explicitly states snapshots/reports are retained; stays open on failure).
+- `src/features/github/github-service.ts` — `listInstallations`,
+  `listInstallationRepositories` (paginated), `githubInstallUrl`
+  (`GET /api/v1/github/install/start` as full-page navigation, never XHR).
+- `src/features/github/components/github-source-form.tsx` — install/update FlowLens App
+  card, installation/account selector, repository picker (radio list with search filter of
+  the visible page + pagination + per-page empty/back-end failures),
+  ref entry pre-filled from the repository's `default_branch`, project-name (optional),
+  import submit; permission failures (`REPOSITORY_ACCESS_DENIED`) and rate/invalid-ref
+  errors surface the backend message; visibility badges shown as informational only with
+  an explicit disclaimer (access is never inferred from them).
+
+### Pages
+
+- `/dashboard` — real project list (was a placeholder empty shell in Phase 2B).
+- `/projects/new` — source chooser with "Upload ZIP" / "Connect GitHub" tabs.
+- `/projects/[project_id]` — project detail/settings: created-notice (once, via
+  `?created=1` + sessionStorage guard), source origin (repository, ref, visibility badge +
+  "informational" note, connected date, latest snapshot hash/file count, resolved commit),
+  immutable snapshot history, refresh (optional different ref; new snapshot appended;
+  403 messaging for lost access), disconnect with confirmation; 404/not-owned handling.
+- Note for Phase 4B: start-analysis actions are intentionally NOT present yet — the
+  analysis lifecycle UI is Phase 4B scope; no placeholder buttons were added.
 
 ## Files added or changed (frontend/ only)
 
 ```
 frontend/
-├── eslint.config.mjs            (new, FlatCompat with next/core-web-vitals + next/typescript)
-├── package.json                 (scripts: lint=eslint ., test/test:watch; new deps)
-├── postcss.config.mjs           (new)
-├── tailwind.config.ts            (new)
-├── vitest.config.ts              (new)
-├── IMPLEMENTATION_STATUS.md      (this file)
+├── IMPLEMENTATION_STATUS.md                  (this file)
 ├── src/
-│   ├── app/
-│   │   ├── globals.css           (new theme tokens)
-│   │   ├── layout.tsx            (root: SessionProvider + Toaster + skip link)
-│   │   ├── page.tsx              (redirect → /dashboard)
-│   │   ├── login/page.tsx        (new)
-│   │   └── (protected)/
-│   │       ├── layout.tsx        (new guarded shell)
-│   │       ├── dashboard/page.tsx
-│   │       └── settings/page.tsx
-│   ├── components/
-│   │   ├── ui/ (button, card, alert, input, badge, skeleton, dialog,
-│   │   │        dropdown-menu, avatar, states)
-│   │   └── layout/ (app-header.tsx, account-card.tsx)
-│   ├── features/auth/
-│   │   ├── auth-service.ts
-│   │   ├── session-provider.tsx
-│   │   ├── require-auth.tsx
-│   │   └── components/ (github-login-button.tsx, logout-button.tsx)
-│   ├── lib/ (api-client.ts, api-error.ts, utils.ts)
-│   └── types/api.ts
-└── tests/ (setup.ts + 4 test suites)
+│   ├── app/globals.css                       (progress keyframes appended)
+│   ├── app/(protected)/dashboard/page.tsx    (now renders ProjectsDashboard)
+│   ├── app/(protected)/projects/new/page.tsx          (new: source chooser)
+│   ├── app/(protected)/projects/[project_id]/page.tsx (new: detail/settings)
+│   ├── components/ui/progress.tsx            (new)
+│   ├── features/projects/projects-service.ts (new)
+│   ├── features/github/github-service.ts     (new)
+│   ├── features/github/components/github-source-form.tsx (new)
+│   ├── features/projects/components/{provider-badge,analysis-state-badge,
+│   │        project-card,projects-dashboard,zip-upload-form,disconnect-dialog}.tsx (new)
+│   ├── lib/{use-async.ts,format.ts}          (new)
+│   └── types/api.ts                          (contract types added)
+└── tests/
+    ├── dashboard-projects.test.tsx  (new: 5 tests)
+    ├── zip-upload.test.tsx          (new: 5 tests, XHR stubbed)
+    ├── github-source.test.tsx       (new: 8 tests)
+    └── project-detail.test.tsx      (new: 5 tests)
 ```
 
-## Commands run and observed results (2025-06-12, Windows, Node 24 / npm 11)
+## Commands run and observed results (2026-11-25, Windows, Node 24 / npm 11)
 
-- `npm install` + dev deps install — OK
-- `npm test` → `vitest run` — **31 passed, 4 files**
-- `npm run typecheck` → `tsc --noEmit` — **pass, no errors**
-- `npm run lint` → `eslint .` — **pass, no errors**
-- `npm run build` → `next build` — **pass**, 5 routes, all static-prerendered
-- `npx next dev -p 3100` live smoke — `/login` HTTP 200 with FlowLens markup,
-  `/dashboard` HTTP 200 (client guard runs in browser); server stopped after check
+- `npm run typecheck` (`tsc --noEmit`) — **pass, no errors**
+- `npm test` (`vitest run`) — **54 passed, 0 failed, 8 files** (31 pre-existing Phase 2B
+  tests still green; 23 new Phase 3B tests)
+- `npm run lint` (`eslint .`) — **pass, no errors**
+- `npm run build` (`next build`) — **pass**; routes: `/`, `/dashboard`, `/login`,
+  `/projects/new`, `/projects/[project_id]` (dynamic server-rendered),
+  `/settings`, `/_not-found`
 
 ## Mocked vs real API
 
-- All tests use a stubbed global `fetch` (no MSW; no fixtures shipped as data).
-- Production code paths call the real backend only. No GitHub client secret,
-  private key, access token, refresh token, or installation token appears in
-  frontend code or env files; only `NEXT_PUBLIC_API_BASE_URL` is configured.
+- Tests only: global `fetch` stubs + XHR stub for the upload suite; no MSW, no fixtures
+  shipped as data, no mock results in product flow.
+- Production code paths call the real backend exclusively
+  (`NEXT_PUBLIC_API_BASE_URL`, `credentials: "include"`; no provider tokens of any kind
+  in frontend code/env/storage).
 
-## Known gaps / next smallest tasks
+## Known gaps / integration notes for Madvith
 
-- Real-backend sign-in redirect is unverified until Phase 2A backend
-  (`/auth/github/start`, `/auth/me`, `/auth/logout`) is merged; then verify
-  cookie/CORS behavior across origins (browser, not just tests).
-- Contract note for Madvith (frontend consumer view): the OpenAPI callback
-  describes an "error query parameter" on the frontend redirect; the frontend
-  recognizes `reason`/`error` values `oauth`, `oauth_denied`, `auth` and
-  `expired`, `signed-out`. Align the exact values at integration time.
-- Next phase (3B): project dashboard data, ZIP upload, GitHub installation/
-  repository/ref pickers against the real endpoints.
+1. **Contract gap (frontend consumer view):** there is no endpoint to list a repository's
+   branches/tags. The ref field is therefore free-text pre-filled with the repository's
+   `default_branch`; a wrong ref currently surfaces the backend's validation error after
+   submit. If a `GET .../branches` route (or ref suggestions embedded in
+   `RepositorySummary`) is desired, coordinate the contract change and I will regenerate
+   types + adapt the picker.
+2. Repository search/filter is client-side within the loaded page (the contract's
+   repositories endpoint only paginates; no `q` parameter). If server-side search is
+   wanted, that is another candidate for coordination.
+3. GitHub/project endpoints (`/github/installations…`, `/projects…`, specific refresh/
+   disconnect) are Phase 3A backend scope; the UI is contract-complete but browser
+   behavior against the live backend (cookie/CORS, real install callbacks) must be
+   verified after that merge. Error-envelope polygon (e.g. `REPOSITORY_ACCESS_DENIED`,
+   `INSTALLATION_NOT_FOUND`, `UPLOAD_INVALID`, `UPLOAD_TOO_LARGE`) is mapped from the
+   backend messages, including the extended code list (codes are treated as extensible
+   strings, so new backend codes do not break the UI).
+4. Subscription of `error_code` extras: `INSTALLATION_NOT_FOUND` and `RATE_LIMITED` are
+   displayed through the generic message path; dedicated copy can be added once the
+   backend sends them in practice.
+5. ZIP content/diagnostics feedback: `Project.latest_snapshot.file_count` is shown; any
+   richer skipped-file diagnostics need a future contract addition if desired in the UI.
 
 ## Next smallest actionable task
 
-Start Phase 3B project dashboard scaffolding: add `Project` types wiring to
-`GET /api/v1/projects` in a `projects` feature module with list/empty/error
-states tested against mocked contract responses.
+Phase 4B: project workspace shell — connect analysis start/status/symbol listing UI to
+`POST /api/v1/snapshots/{snapshot_id}/analyses`, `GET /api/v1/analyses/{analysis_id}` and
+`/symbols` once the Phase 4A backend lands; until then keep the detail page honest
+(no analysis controls).
