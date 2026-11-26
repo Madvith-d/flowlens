@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Network, PlayCircle, Settings2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, FileDiff, Network, PlayCircle, Settings2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -264,14 +264,23 @@ export default function ProjectWorkspacePage() {
                         <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-1">
                           <p className="text-sm text-muted-foreground">
                             Explore statically inferred dependencies between the analyzed
-                            symbols at module, class, and function level.
+                            symbols at module, class, and function level, or review a diff,
+                            attach coverage, and export a Markdown report.
                           </p>
-                          <Button asChild>
-                            <Link href={`/projects/${projectId}/graph?analysis=${analysis.id}`}>
-                              <Network aria-hidden="true" className="size-4" />
-                              Open dependency graph
-                            </Link>
-                          </Button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button asChild>
+                              <Link href={`/projects/${projectId}/graph?analysis=${analysis.id}`}>
+                                <Network aria-hidden="true" className="size-4" />
+                                Open dependency graph
+                              </Link>
+                            </Button>
+                            <Button asChild variant="outline">
+                              <Link href={`/projects/${projectId}/review?analysis=${analysis.id}`}>
+                                <FileDiff aria-hidden="true" className="size-4" />
+                                Review changes &amp; reports
+                              </Link>
+                            </Button>
+                          </div>
                         </CardContent>
                       </Card>
                       <SymbolBrowser analysisId={analysis.id} />

@@ -5,7 +5,7 @@ import type cytoscape from "cytoscape";
 import { Maximize, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import type { GraphEdge, GraphNode } from "@/types/api";
+import type { CoverageStatus, GraphEdge, GraphNode } from "@/types/api";
 
 /**
  * Cytoscape.js canvas — the sole MVP graph renderer.
@@ -26,6 +26,7 @@ export function GraphCanvas({
   impactDirect,
   impactIndirect,
   impactPathEdges,
+  coverageOverlay,
   onSelectNode,
   onSelectEdge,
 }: {
@@ -41,6 +42,8 @@ export function GraphCanvas({
   impactIndirect?: readonly string[];
   /** Edge IDs of the focused representative paths. */
   impactPathEdges?: readonly string[];
+  /** Attach a coverage text marker to node labels (Phase 7B overlay). */
+  coverageOverlay?: boolean;
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
 }) {
@@ -103,9 +106,13 @@ export function GraphCanvas({
   }, []);
 
   // ---- sync graph data ------------------------------------------------------
+  // Coverage markers extend the label, so the signature covers them too.
   const nodeSignature = React.useMemo(
-    () => nodes.map((node) => node.id).join(",") + `#${nodes.length}`,
-    [nodes]
+    () =>
+      nodes
+        .map((node) => node.id + (coverageOverlay && node.coverage_status ? `|${node.coverage_status}` : ""))
+        .join(",") + `#${nodes.length}`,
+    [nodes, coverageOverlay]
   );
   const edgeSignature = React.useMemo(
     () => edges.map((edge) => edge.id).join(",") + `#${edges.length}`,
@@ -122,7 +129,9 @@ export function GraphCanvas({
         group: "nodes" as const,
         data: {
           id: node.id,
-          label: node.name,
+          label: coverageOverlay && node.coverage_status
+            ? `${node.name} ${COVERAGE_MARKER[node.coverage_status]}`
+            : node.name,
           kind: node.kind,
           qualifiedName: node.qualified_name,
         },
@@ -231,6 +240,18 @@ export function GraphCanvas({
     </div>
   );
 }
+
+/**
+ * Coverage text markers appended to node labels when the Phase 7B overlay
+ * is active. Text (not color alone); the legend restates each meaning and
+ * the table view carries the full status words.
+ */
+const COVERAGE_MARKER: Record<CoverageStatus, string> = {
+  covered: "✓",
+  partially_covered: "◑",
+  uncovered: "✗",
+  unknown: "?",
+};
 
 /**
  * Cytoscape styles. Node kind uses shape + color + label (legend mirrors the
