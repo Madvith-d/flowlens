@@ -38,6 +38,16 @@ INSTALLATION_NOT_FOUND = ApiError(
     code="INSTALLATION_NOT_FOUND",
     message="FlowLens could not find this GitHub App installation.",
 )
+INSTALLATION_TOKEN_REJECTED = ApiError(
+    status_code=502,
+    code="INSTALLATION_TOKEN_REJECTED",
+    message=(
+        "GitHub rejected the installation access token request. Make sure the "
+        "FlowLens GitHub App has the required repository permissions "
+        "(Contents: read-only and Metadata: read-only) and access to the "
+        "repository, then re-approve the installation on GitHub."
+    ),
+)
 INSTALLATION_ACCESS_DENIED = ApiError(
     status_code=403,
     code="REPOSITORY_ACCESS_DENIED",
@@ -193,7 +203,10 @@ class GitHubAppClient:
     """Injectable interface for installation-level GitHub operations."""
 
     def build_installation_token(
-        self, installation_id: int, repository_ids: list[int] | None = None
+        self,
+        installation_id: int,
+        repository_ids: list[int] | None = None,
+        permissions: dict[str, str] | None = None,
     ) -> InstallationToken:
         raise NotImplementedError
 
@@ -240,6 +253,7 @@ class HttpxGitHubAppClient(GitHubAppClient):
         *,
         headers: dict[str, str],
         params: dict | None = None,
+        json_body: dict | None = None,
         allow_hosts: set[str] | None = None,
     ) -> httpx.Response:
         """Single-hop request that refuses any non-allowlisted host.
@@ -256,7 +270,9 @@ class HttpxGitHubAppClient(GitHubAppClient):
                 raise GITHUB_API_ERROR
             try:
                 with httpx.Client(timeout=self._timeout, follow_redirects=False) as client:
-                    response = client.request(method, current_url, headers=headers, params=params)
+                    response = client.request(
+                        method, current_url, headers=headers, params=params, json=json_body
+                    )
             except httpx.HTTPError as exc:
                 logger.warning(
                     "github request transport error",
@@ -296,29 +312,49 @@ class HttpxGitHubAppClient(GitHubAppClient):
 
     # ------------------------------------------------- installation tokens
     def build_installation_token(
-        self, installation_id: int, repository_ids: list[int] | None = None
+        self,
+        installation_id: int,
+        repository_ids: list[int] | None = None,
+        permissions: dict[str, str] | None = None,
     ) -> InstallationToken:
         """Short-lived installation access token, scoped when supported.
 
         Tokens live only in server memory for the duration of a request;
         they are never stored in the database or returned to a client.
+        `permissions` downscopes the token to what the operation needs; it
+        must be a subset of the permissions the installation actually
+        granted, otherwise GitHub rejects the request with 422.
         """
         self._require_app_config()
         jwt = sign_app_jwt(self._settings.github_app_id, self._settings.github_app_private_key)
-        body: dict = {"permissions": {"contents": "read", "metadata": "read"}}
+        if permissions is None:
+            permissions = {"contents": "read", "metadata": "read"}
+        body: dict = {"permissions": permissions}
         if repository_ids:
             body["repository_ids"] = repository_ids
         response = self._request(
             "POST",
             f"{self._settings.github_api_base_url}/app/installations/{installation_id}/access_tokens",
             headers=self._api_headers(jwt),
+            json_body=body,
         )
         if response.status_code == 404:
             raise INSTALLATION_NOT_FOUND
+        if response.status_code == 422:
+            # GitHub rejects downscoping to permissions the installation has
+            # not granted (or repository_ids it cannot access).
+            logger.warning(
+                "installation token request rejected by github",
+                extra={"context": {"status": 422, "permissions": permissions}},
+            )
+            raise INSTALLATION_TOKEN_REJECTED
         if response.status_code != 201:
             self._map_status(response)
-            logger.warning("installation token creation failed", extra={"context": {}})
-            raise INSTALLATION_NOT_FOUND if response.status_code == 422 else GITHUB_API_ERROR
+            logger.warning(
+                "installation token creation failed",
+                extra={"context": {"status": response.status_code}},
+            )
+            raise GITHUB_API_ERROR
         payload = self._json(response)
         expires_at = time.time() + INSTALLATION_TOKEN_TTL_MARGIN_SECONDS
         return InstallationToken(token=payload["token"], expires_at=expires_at)

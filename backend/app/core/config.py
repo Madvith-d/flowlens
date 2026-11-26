@@ -5,7 +5,7 @@ Secrets are never logged; values marked in `.env.example` only.
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -93,6 +93,21 @@ class Settings(BaseSettings):
     # --- Versions recorded on analysis runs ---
     flowlens_version: str = "0.1.0"
     graph_schema_version: str = "1"
+
+    @field_validator("github_app_private_key", mode="before")
+    @classmethod
+    def _normalize_private_key(cls, value: object) -> object:
+        """Accept PEM keys with real or escaped newlines, as documented.
+
+        Secrets stores and single-line `.env` entries commonly carry the PEM
+        with literal `\n` sequences; without this, `load_pem_private_key`
+        fails and every installation-token call reports the app as not
+        configured. Empty values pass through untouched.
+        """
+        if not isinstance(value, str) or not value.strip():
+            return value
+        normalized = value.strip().replace("\\r\\n", "\\n").replace("\\n", "\n").strip()
+        return normalized
 
     @property
     def is_production(self) -> bool:

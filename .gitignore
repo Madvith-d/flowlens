@@ -31,3 +31,7 @@ next-env.d.ts
 # --- Runtime artifacts ---
 storage/
 *.log
+
+# Local secrets backups (e.g. .env.bak) and PEM keys must never be committed.
+.env.bak
+*.pem

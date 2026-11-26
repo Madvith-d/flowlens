@@ -107,7 +107,12 @@ class GitHubInstallationService:
         )
         if matched is None:
             raise INSTALLATION_ACCESS_DENIED
-        token = self._app_client.build_installation_token(installation_id)
+        # Listing only reads repository metadata; request only that
+        # permission so tokens stay least-privilege and work even when the
+        # installation has not (yet) granted Contents access.
+        token = self._app_client.build_installation_token(
+            installation_id, permissions={"metadata": "read"}
+        )
         repositories = self._app_client.list_installation_repositories(
             token.token, page=page, per_page=per_page
         )

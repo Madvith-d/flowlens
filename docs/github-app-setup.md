@@ -40,9 +40,26 @@ See `backend/.env.example`; every required GitHub App variable is listed with
 a safe placeholder and an explanation:
 
 - `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`,
-  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` (PEM content),
-  `GITHUB_OAUTH_CALLBACK_URL` (falls back to
+  `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_PRIVATE_KEY` (PEM content — real or
+  `\n`-escaped newlines both work), `GITHUB_OAUTH_CALLBACK_URL` (falls back to
   `{BACKEND_PUBLIC_URL}/api/v1/auth/github/callback`).
+
+> **Troubleshooting:** if the repository step in the import flow fails with
+> "Could not list repositories" while the installation list works, the backend
+> almost certainly cannot sign the App JWT: `GITHUB_APP_PRIVATE_KEY` is empty
+> or malformed in `backend/.env` (single-line `\n`-escaped PEMs are supported).
+> Download the `.pem` from your GitHub App settings (Private keys → Generate),
+> paste its contents into `GITHUB_APP_PRIVATE_KEY`, and restart the backend.
+> Listing installations uses the user OAuth token only, which is why it keeps
+> working without the key.
+>
+> If the error says GitHub rejected the installation access token, the App is
+> missing required permissions on GitHub: open the App settings →
+> *Permissions & events* → *Repository permissions* and set **Contents:
+> Read-only** and **Metadata: Read-only** (metadata is mandatory; listing
+> repositories needs metadata only, importing a snapshot needs contents).
+> Save, then re-approve the installation when GitHub asks. Listing works
+> with metadata alone; imports require contents.
 
 ## Installation flow (what the backend does)
 

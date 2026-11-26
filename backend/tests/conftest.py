@@ -148,7 +148,10 @@ class MockGitHubAppClient(GitHubAppClient):
 
     # ------------------------------------------------------------ tokens
     def build_installation_token(
-        self, installation_id: int, repository_ids: list[int] | None = None
+        self,
+        installation_id: int,
+        repository_ids: list[int] | None = None,
+        permissions: dict[str, str] | None = None,
     ) -> InstallationToken:
         if installation_id == EXPIRED_TOKEN_INSTALLATION:
             return InstallationToken(
