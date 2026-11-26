@@ -68,6 +68,20 @@ class Settings(BaseSettings):
     # dependency graph stays within this node budget; responses cap edges.
     graph_metrics_max_nodes: int = 10_000
     graph_max_edges_per_response: int = 5_000
+    # Impact traversal bounds (Phase 6A): per-request target count and depth
+    # follow the contract (1-10); the impacted list has its own bound.
+    impact_max_impacted_nodes: int = 500
+    # Versioned risk-score heuristic (Phase 6A). Weights are renormalized over
+    # the included factors; the score is a prioritization heuristic, not a
+    # failure probability.
+    risk_score_version: str = "1"
+    risk_weight_upstream_dependents: float = 0.35
+    risk_weight_in_degree: float = 0.20
+    risk_weight_downstream_breadth: float = 0.15
+    risk_weight_public_entry: float = 0.15
+    risk_weight_coverage_deficiency: float = 0.15
+    # Reachability sizes are normalized against this cap (bounded in [0, 1]).
+    risk_normalization_cap: int = 100
 
     # --- Versions recorded on analysis runs ---
     flowlens_version: str = "0.1.0"

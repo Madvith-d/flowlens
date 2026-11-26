@@ -120,6 +120,29 @@ changes must be made there first, coordinated between contributors.
   reachability is omitted rather than estimated. Graph endpoints answer 409
   `ANALYSIS_NOT_READY` until the analysis completes.
 
+## Impact and risk scoring (implemented: Phase 6A)
+
+- **Impact is BFS with shortest-hop distances and cycle protection**
+  (`services/analysis/impact.py`). `POST /analyses/{id}/impact` traverses
+  only stored dependency edges (never `CONTAINS`) from one or more targets
+  (1–10, deduplicated), in `upstream` (callers/dependents), `downstream`
+  (dependencies), or `both` directions, bounded by `max_depth` (1–10).
+  Impacted nodes are classified direct (hop distance 1) vs transitive, carry
+  per-target attribution, an exact `min_hops`, and representative shortest
+  paths — ordered sequences of the same edge IDs the graph API exposes, so
+  clients can correlate them. Beyond `IMPACT_MAX_IMPACTED_NODES` the list is
+  truncated, flagged, and warned about.
+- **The risk score is a versioned, explainable prioritization heuristic**
+  (`services/analysis/risk.py`) — explicitly not a failure probability, per
+  the contract. Configurable weights (default 35/20/15/15/15) cover normalized
+  upstream reachable dependents, in-degree centrality, downstream breadth, a
+  structural public/entry-point indicator, and coverage deficiency; with no
+  coverage attached (until Phase 7A) the coverage factor is excluded, the
+  remaining weights are renormalized, and the fact is disclosed via
+  `coverage_included: false` plus caveats. Every factor reports its raw value,
+  normalized value, and applied weight; unresolvable reachability (metrics
+  budget exceeded) removes factors rather than estimating them.
+
 ## Security invariants
 
 - Analyzed source is never executed or imported.

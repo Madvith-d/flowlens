@@ -22,6 +22,7 @@ from app.repositories.projects import ProjectRepository, SnapshotRepository
 from app.repositories.users import UserRepository
 from app.services.analysis.service import AnalysisService
 from app.services.analysis.graph import AnalysisGraphService
+from app.services.analysis.impact import ImpactService
 from app.services.auth.service import AUTH_REQUIRED, AuthService
 from app.services.github.service import GitHubInstallationService
 from app.services.ingestion.storage import SnapshotStorage
@@ -193,6 +194,32 @@ class GraphBundle:
             symbol_repo=SymbolRepository(db),
             edge_repo=DependencyEdgeRepository(db),
         )
+
+
+class ImpactBundle:
+    """Request-scoped wiring for impact endpoint."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = ImpactService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            symbol_repo=SymbolRepository(db),
+            edge_repo=DependencyEdgeRepository(db),
+        )
+
+
+def get_impact_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> ImpactBundle:
+    return ImpactBundle(request, db, user)
 
 
 def get_graph_bundle(

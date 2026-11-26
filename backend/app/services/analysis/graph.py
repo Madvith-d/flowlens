@@ -83,6 +83,18 @@ class _StoredEdge:
     evidence: tuple[dict, ...]
 
 
+def view_edge_id(analysis_id: str, source_id: str, target_id: str, kind: str) -> str:
+    """Stable response edge ID shared by graph and impact payloads.
+
+    Path edge IDs in impact results must match the edge IDs the graph API
+    exposes for the same (source, target, kind), so clients can correlate
+    them; both payload layers use this one function.
+    """
+    return hashlib.sha256(
+        f"{analysis_id}|graph|{source_id}|{target_id}|{kind}".encode("utf-8")
+    ).hexdigest()[:40]
+
+
 class AnalysisGraphService:
     """Reads one completed analysis and serves bounded graph queries."""
 
@@ -507,9 +519,4 @@ class AnalysisGraphService:
         payload["coverage_status"] = "unknown"  # coverage lands in Phase 7A
         return payload
 
-    @staticmethod
-    def _view_edge_id(analysis_id: str, source_id: str, target_id: str, kind: str) -> str:
-        """Stable response edge ID for a (possibly view-collapsed) edge."""
-        return hashlib.sha256(
-            f"{analysis_id}|graph|{source_id}|{target_id}|{kind}".encode("utf-8")
-        ).hexdigest()[:40]
+    _view_edge_id = staticmethod(view_edge_id)
