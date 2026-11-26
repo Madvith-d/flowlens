@@ -1,136 +1,131 @@
 # IMPLEMENTATION_STATUS — Frontend (Sameeksha)
 
-**Branch:** `sam` (based on `main` after Phase 2A backend merge; Phase 2B already merged)
-**Phase:** 3B complete — Project dashboard and source creation UX
-**Ownership:** `frontend/**` only. No files in `backend/**` or `contracts/openapi.yaml` were modified in this phase.
+**Branch:** `sam`
+**Phase:** 4B complete — Analysis status, symbols, and project workspace shell
+(Phases 2B/3B previously merged; built against Phase 2A+3A backend on this branch)
+**Ownership:** `frontend/**` only. No files in `backend/**` or `contracts/openapi.yaml`
+were modified in this phase.
 
-## Completed in this session (Phase 3B)
+## Completed in this session (Phase 4B)
 
 All UI is built against the frozen `contracts/openapi.yaml` v0.1.0. Production paths call
-the real backend only; stubbed fetch/XHR responses exist exclusively inside `tests/`.
+the real backend only; stubbed fetch responses exist exclusively inside `tests/`.
 
-### Shared foundation (added)
+### Shared foundation
 
-- `src/types/api.ts` — contract types added: `SourceProvider`, `AnalysisState`, `NodeKind`,
-  `GitHubInstallation`, `RepositorySummary`, `PaginatedRepositories`, `GitHubConnection`,
-  `DiagnosticsSummary`, `AnalysisRun`, `GitHubProvenance`, `Snapshot`, `Project`,
-  `PaginatedProjects`, `PaginatedSnapshots` (mirrored from the contract, no undocumented keys).
-- `src/lib/use-async.ts` — `useAsync` data-loading hook (loading / error-message mapping /
-  reload) and a shared `errorMessage` helper; unmounted results discarded.
-- `src/lib/format.ts` — locale-explicit date/time + short-hash display helpers
-  (unknown values render as "—", never fabricated).
-- `src/components/ui/progress.tsx` — accessible progress bar; determinate mode takes only
-  measured values, omitting the value yields an honest indeterminate state.
-  Keyframes added to `src/app/globals.css`.
+- `src/types/api.ts` — contract types added: `SourceLocation`, `Symbol` (contract schema
+  `Symbol`), `PaginatedSymbols`.
+- `src/features/analysis/analysis-service.ts` (new) — typed wrappers:
+  - `startAnalysis` → `POST /api/v1/snapshots/{snapshot_id}/analyses` (202 → `AnalysisRun`)
+  - `getAnalysis` → `GET /api/v1/analyses/{analysis_id}`
+  - `listSymbols` → `GET /api/v1/analyses/{analysis_id}/symbols` with `q`, `kind`,
+    `page`, `per_page` query parameters (mapped/omitted exactly as documented)
+  - `isPendingState` / `isTerminalState` helpers
+- `src/features/analysis/use-analysis-status.ts` (new) — bounded polling hook:
+  polls `GET /analyses/{id}` every 2s while `queued`/`running`; stops at terminal
+  states, on unmount, on poll error (shows backend error + manual refresh), or after
+  a 300-poll budget (~10 min) with an honest "Still running" + manual refresh — no
+  fabricated progress.
 
-### Features/projects
+### Components (`src/features/analysis/components/`, new)
 
-- `src/features/projects/projects-service.ts` — typed wrappers: `listProjects`,
-  `getProject`, `listSnapshots`, `createProject`, `createProjectFromGithub`,
-  `refreshProject`, `disconnectGithubConnection`, and `createProjectFromUpload`
-  (XMLHttpRequest-based so real upload progress is available; `withCredentials=true`,
-  120s timeout, abort support, error envelope normalized through the shared
-  `toApiError` parser — same envelope as the fetch client).
-- Components: `ProviderBadge` (icon + text), `AnalysisStateBadge` (explicit
-  "No analysis yet" absence state), `ProjectCard`, `ProjectsDashboard`
-  (loading skeletons / error + retry / empty / paginated grid), `ZipUploadForm`
-  (client checks only the file type honestly; backend `UPLOAD_INVALID` /
-  `UPLOAD_TOO_LARGE` messages shown verbatim; real upload progress; duplicate-submission
-  guard; retry keeps the selection; cancel during body upload), `DisconnectDialog`
-  (explicitly states snapshots/reports are retained; stays open on failure).
-- `src/features/github/github-service.ts` — `listInstallations`,
-  `listInstallationRepositories` (paginated), `githubInstallUrl`
-  (`GET /api/v1/github/install/start` as full-page navigation, never XHR).
-- `src/features/github/components/github-source-form.tsx` — install/update FlowLens App
-  card, installation/account selector, repository picker (radio list with search filter of
-  the visible page + pagination + per-page empty/back-end failures),
-  ref entry pre-filled from the repository's `default_branch`, project-name (optional),
-  import submit; permission failures (`REPOSITORY_ACCESS_DENIED`) and rate/invalid-ref
-  errors surface the backend message; visibility badges shown as informational only with
-  an explicit disclaimer (access is never inferred from them).
+- `analysis-card.tsx` — state badge (icon+text, never color-only), queued/running,
+  failed (with `error_code`), completed-with-warnings; file/symbol/edge counters
+  (`unknown` when the backend omits them); FlowLens/graph-schema versions; run id and
+  timestamps; manual-refresh actions for poll error / budget exhaustion.
+- `diagnostics-summary.tsx` — syntax errors / unresolved / ambiguous / skipped-files
+  counts as icon+text chips; missing fields render "unknown", never 0.
+- `symbol-browser.tsx` — searchable symbol catalog: debounced search (`q`), kind filter
+  (`kind`), pagination with backend truth (`total_pages` gates the Next button; no
+  fake page counts), keyboard-accessible table rows, and a selected-symbol detail view
+  (kind, qualified name, snapshot-relative file path, line/column span, parent id).
+  `ANALYSIS_NOT_READY` maps to an explicit "analysis still in progress" message.
+  Empty state distinguishes "no matches for the filter" from "no symbols at all".
 
 ### Pages
 
-- `/dashboard` — real project list (was a placeholder empty shell in Phase 2B).
-- `/projects/new` — source chooser with "Upload ZIP" / "Connect GitHub" tabs.
-- `/projects/[project_id]` — project detail/settings: created-notice (once, via
-  `?created=1` + sessionStorage guard), source origin (repository, ref, visibility badge +
-  "informational" note, connected date, latest snapshot hash/file count, resolved commit),
-  immutable snapshot history, refresh (optional different ref; new snapshot appended;
-  403 messaging for lost access), disconnect with confirmation; 404/not-owned handling.
-- Note for Phase 4B: start-analysis actions are intentionally NOT present yet — the
-  analysis lifecycle UI is Phase 4B scope; no placeholder buttons were added.
+- `/projects/[project_id]/workspace` (new) — project workspace shell:
+  - Project header (name, provider badge, analysis-state badge) + links back to
+    settings/dashboard.
+  - Snapshot selector (defaults to the latest snapshot) with per-snapshot provenance
+    (ref, resolved commit, content hash, file count); selection persistence is honest:
+    switching snapshots switches which analysis state is shown.
+  - Start analysis (`Analyze this snapshot` / `Retry analysis`) against the selected
+    immutable snapshot id; duplicate submissions prevented while starting; errors
+    surfaced from the backend envelope.
+  - Status polling via `useAnalysisStatus`; after a terminal state the project is
+    reloaded so `Project.latest_analysis` stays authoritative.
+  - Per-snapshot honesty: the contract only exposes `Project.latest_analysis`, so for a
+    snapshot without a known run the UI says so instead of inventing a status; a run
+    started this session takes precedence over an older recorded run.
+  - States: loading skeletons; no-source-snapshot empty state (with settings CTA);
+    no-Python-files result state; failed-with-retry; completed-with-warnings with
+    diagnostics; poll error/poll budget with manual refresh; project 404/not-owned.
+- `/projects/[project_id]` (settings) — added "Open workspace" action and pointed the
+  project-created notice at the workspace.
 
 ## Files added or changed (frontend/ only)
 
 ```
 frontend/
-├── IMPLEMENTATION_STATUS.md                  (this file)
-├── src/
-│   ├── app/globals.css                       (progress keyframes appended)
-│   ├── app/(protected)/dashboard/page.tsx    (now renders ProjectsDashboard)
-│   ├── app/(protected)/projects/new/page.tsx          (new: source chooser)
-│   ├── app/(protected)/projects/[project_id]/page.tsx (new: detail/settings)
-│   ├── components/ui/progress.tsx            (new)
-│   ├── features/projects/projects-service.ts (new)
-│   ├── features/github/github-service.ts     (new)
-│   ├── features/github/components/github-source-form.tsx (new)
-│   ├── features/projects/components/{provider-badge,analysis-state-badge,
-│   │        project-card,projects-dashboard,zip-upload-form,disconnect-dialog}.tsx (new)
-│   ├── lib/{use-async.ts,format.ts}          (new)
-│   └── types/api.ts                          (contract types added)
+├── IMPLEMENTATION_STATUS.md                              (this file)
+├── src/types/api.ts                                      (Symbol/SourceLocation/PaginatedSymbols added)
+├── src/features/analysis/
+│   ├── analysis-service.ts                               (new)
+│   ├── use-analysis-status.ts                            (new)
+│   └── components/{analysis-card,diagnostics-summary,symbol-browser}.tsx (new)
+├── src/app/(protected)/projects/[project_id]/workspace/page.tsx          (new)
+├── src/app/(protected)/projects/[project_id]/page.tsx                    (workspace link + notice copy)
 └── tests/
-    ├── dashboard-projects.test.tsx  (new: 5 tests)
-    ├── zip-upload.test.tsx          (new: 5 tests, XHR stubbed)
-    ├── github-source.test.tsx       (new: 8 tests)
-    └── project-detail.test.tsx      (new: 5 tests)
+    ├── analysis-workspace.test.tsx                       (new: 10 tests)
+    ├── symbol-browser.test.tsx                           (new: 6 tests)
+    └── project-detail.test.tsx                            (+1 assertion: workspace link target)
 ```
 
-## Commands run and observed results (2026-11-25, Windows, Node 24 / npm 11)
+## Commands run and observed results (Windows, Node 24 / npm 11)
 
 - `npm run typecheck` (`tsc --noEmit`) — **pass, no errors**
-- `npm test` (`vitest run`) — **54 passed, 0 failed, 8 files** (31 pre-existing Phase 2B
-  tests still green; 23 new Phase 3B tests)
-- `npm run lint` (`eslint .`) — **pass, no errors**
-- `npm run build` (`next build`) — **pass**; routes: `/`, `/dashboard`, `/login`,
-  `/projects/new`, `/projects/[project_id]` (dynamic server-rendered),
-  `/settings`, `/_not-found`
+- `npm run test` (`vitest run`) — **70 passed, 0 failed, 10 files**
+  (54 pre-existing Phase 2B/3B tests still green; 16 new Phase 4B tests)
+- `npm run lint` (`eslint .`) — **pass, no errors or warnings**
+- `npm run build` (`next build`) — **pass**; routes now include
+  `/projects/[project_id]/workspace` (dynamic server-rendered)
+
+Notes from verification: fake timers drive the polling tests (queued → running →
+completed transitions, poll failure + manual-refresh recovery, the 300-poll budget
+stop). All API calls in tests are stubbed `fetch` responses only.
 
 ## Mocked vs real API
 
-- Tests only: global `fetch` stubs + XHR stub for the upload suite; no MSW, no fixtures
-  shipped as data, no mock results in product flow.
 - Production code paths call the real backend exclusively
-  (`NEXT_PUBLIC_API_BASE_URL`, `credentials: "include"`; no provider tokens of any kind
-  in frontend code/env/storage).
+  (`NEXT_PUBLIC_API_BASE_URL`, `credentials: "include"`; no provider tokens of any
+  kind in frontend code/env/storage).
+- Tests only: stubbed global `fetch`; no MSW, no shipped fixtures, no mock results in
+  product flow.
 
 ## Known gaps / integration notes for Madvith
 
-1. **Contract gap (frontend consumer view):** there is no endpoint to list a repository's
-   branches/tags. The ref field is therefore free-text pre-filled with the repository's
-   `default_branch`; a wrong ref currently surfaces the backend's validation error after
-   submit. If a `GET .../branches` route (or ref suggestions embedded in
-   `RepositorySummary`) is desired, coordinate the contract change and I will regenerate
-   types + adapt the picker.
-2. Repository search/filter is client-side within the loaded page (the contract's
-   repositories endpoint only paginates; no `q` parameter). If server-side search is
-   wanted, that is another candidate for coordination.
-3. GitHub/project endpoints (`/github/installations…`, `/projects…`, specific refresh/
-   disconnect) are Phase 3A backend scope; the UI is contract-complete but browser
-   behavior against the live backend (cookie/CORS, real install callbacks) must be
-   verified after that merge. Error-envelope polygon (e.g. `REPOSITORY_ACCESS_DENIED`,
-   `INSTALLATION_NOT_FOUND`, `UPLOAD_INVALID`, `UPLOAD_TOO_LARGE`) is mapped from the
-   backend messages, including the extended code list (codes are treated as extensible
-   strings, so new backend codes do not break the UI).
-4. Subscription of `error_code` extras: `INSTALLATION_NOT_FOUND` and `RATE_LIMITED` are
-   displayed through the generic message path; dedicated copy can be added once the
-   backend sends them in practice.
-5. ZIP content/diagnostics feedback: `Project.latest_snapshot.file_count` is shown; any
-   richer skipped-file diagnostics need a future contract addition if desired in the UI.
+1. **Analysis endpoints are Phase 4A backend scope** (`POST /snapshots/{id}/analyses`,
+   `GET /analyses/{id}`, `GET /analyses/{id}/symbols`). The UI is contract-complete and
+   tested against contract-shaped responses; live end-to-end verification (start →
+   poll → symbols) must happen once Phase 4A merges into `main`. Until then the real
+   backend will return 404 for these routes and no analysis UI state is fabricated.
+2. **Per-snapshot analysis history gap (consumer view):** the contract has no way to
+   list the latest analysis of an arbitrary (non-latest) snapshot — only
+   `Project.latest_analysis` exists. The workspace therefore shows an honest "unknown /
+   start a run" state for older snapshots. If a `GET /snapshots/{id}/analyses`-style
+   endpoint (or per-snapshot latest analysis on `Snapshot`) is desired, coordinate the
+   contract change and I will regenerate types + adapt the workspace.
+3. Diagnostics are counts only (`DiagnosticsSummary`); there is no per-diagnostic detail
+   endpoint in the contract, so the UI shows counts (and "unknown" when absent) rather
+   than file-level lists. A details endpoint would be another coordination candidate.
+4. Polling is client-side at 2s with a 300-attempt budget (~10 min) plus manual refresh;
+   if the backend later offers push/progress mechanisms, the hook can be swapped.
+5. `python_file_count === 0` renders an explicit "No Python files in this snapshot"
+   state (no symbol browser) — correct per contract semantics; found nothing to fabricate.
 
 ## Next smallest actionable task
 
-Phase 4B: project workspace shell — connect analysis start/status/symbol listing UI to
-`POST /api/v1/snapshots/{snapshot_id}/analyses`, `GET /api/v1/analyses/{analysis_id}` and
-`/symbols` once the Phase 4A backend lands; until then keep the detail page honest
-(no analysis controls).
+Phase 5B prerequisite check: once Phase 5A (resolver/graph APIs) lands, regenerate
+types from `contracts/openapi.yaml` and start the Cytoscape.js graph workspace
+(`/projects/[project_id]/graph`) using the bounded filtered graph/neighbors endpoints.
