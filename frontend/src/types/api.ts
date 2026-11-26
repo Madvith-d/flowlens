@@ -227,3 +227,81 @@ export interface PaginatedSymbols {
   items: Symbol[];
   pagination: Pagination;
 }
+
+// -------------------------------------------------------------------- graph
+
+/** `EdgeKind` schema. `CONTAINS` is structural, not a dependency. */
+export type EdgeKind =
+  | "CALLS"
+  | "IMPORTS"
+  | "INHERITS"
+  | "REFERENCES"
+  | "CONTAINS";
+
+/** `ImpactDirection` schema (also the neighbor-expansion direction filter). */
+export type ImpactDirection = "upstream" | "downstream" | "both";
+
+/** `Confidence` schema — resolution confidence of an edge/evidence. */
+export type Confidence = "high" | "medium" | "low";
+
+/** `CoverageStatus` schema (unknown, never zero, when coverage is absent). */
+export type CoverageStatus =
+  | "covered"
+  | "partially_covered"
+  | "uncovered"
+  | "unknown";
+
+/** `view` query enum of `GET /api/v1/analyses/{analysis_id}/graph`. */
+export type GraphView = "module" | "class" | "function";
+
+/** `GraphNodeMetrics` schema — degrees and reachable counts. */
+export interface GraphNodeMetrics {
+  in_degree: number;
+  out_degree: number;
+  /** Reachable dependents count (optional in the contract). */
+  upstream_reachable?: number;
+  /** Reachable dependencies count (optional in the contract). */
+  downstream_reachable?: number;
+}
+
+/** `GraphNode` schema — a Symbol plus optional metrics and coverage. */
+export interface GraphNode extends Symbol {
+  metrics?: GraphNodeMetrics;
+  coverage_status?: CoverageStatus;
+}
+
+/** `EdgeEvidence` schema — where the edge was resolved in the source. */
+export interface EdgeEvidence {
+  file_path: string;
+  line: number;
+  column?: number;
+  /** Source expression that produced the edge (bounded length). */
+  expression?: string;
+}
+
+/** `GraphEdge` schema — typed, evidenced dependency edge. */
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: EdgeKind;
+  confidence: Confidence;
+  /** Resolver/strategy name that produced the edge. */
+  resolver?: string;
+  /** At least one evidence location per dependency edge. */
+  evidence: EdgeEvidence[];
+}
+
+/** `GraphResponse` schema — bounded graph/neighbors payload. */
+export interface GraphResponse {
+  analysis_id: ObjectId;
+  view: GraphView;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** True when server-side limits were hit. */
+  truncated: boolean;
+  total_nodes?: number;
+  total_edges?: number;
+  /** Unresolved/ambiguous references recorded in diagnostics. */
+  unresolved_count?: number;
+}
