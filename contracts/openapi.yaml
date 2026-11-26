@@ -562,6 +562,9 @@ paths:
       tags: [graph]
       summary: Node detail with metrics and coverage status
       operationId: getNode
+      description: |
+        Answers 409 `ANALYSIS_NOT_READY` when the analysis run exists but has
+        not completed.
       parameters:
         - $ref: "#/components/parameters/PathAnalysisId"
         - $ref: "#/components/parameters/PathNodeId"
@@ -576,11 +579,16 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/analyses/{analysis_id}/nodes/{node_id}/neighbors:
     get:
       tags: [graph]
       summary: Bounded neighborhood expansion
       operationId: getNodeNeighbors
+      description: |
+        Neighborhood expansion runs at symbol granularity; answers 409
+        `ANALYSIS_NOT_READY` when the analysis run has not completed.
       parameters:
         - $ref: "#/components/parameters/PathAnalysisId"
         - $ref: "#/components/parameters/PathNodeId"
@@ -612,6 +620,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   # ------------------------------------------------------------------ impact
   /api/v1/analyses/{analysis_id}/impact:

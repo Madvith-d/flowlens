@@ -39,6 +39,10 @@ class ParsedImport:
     names: tuple[str, ...]
     level: int
     line: int
+    # Names actually bound in the importing scope, positionally paired with
+    # `names` (`asname` when present, else the imported name). Required for
+    # alias resolution; kept positional so plain-name imports are unchanged.
+    bindings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -118,13 +122,16 @@ def _decorator_texts(node: ast.AST) -> list[str]:
 def _import_record(node: ast.AST) -> ParsedImport:
     if isinstance(node, ast.Import):
         names = tuple(alias.name for alias in node.names)
-        return ParsedImport(module=None, names=names, level=0, line=node.lineno)
+        bindings = tuple(alias.asname or alias.name for alias in node.names)
+        return ParsedImport(module=None, names=names, level=0, line=node.lineno, bindings=bindings)
     names = tuple(alias.name for alias in node.names)
+    bindings = tuple(alias.asname or alias.name for alias in node.names)
     return ParsedImport(
         module=node.module,
         names=names,
         level=getattr(node, "level", 0) or 0,
         line=node.lineno,
+        bindings=bindings,
     )
 
 
@@ -341,7 +348,13 @@ def collect_python_files(snapshot_root: Path, excluded_names: set[str]) -> list[
 def symbol_imports_to_json(imports: list[ParsedImport]) -> str:
     return json.dumps(
         [
-            {"module": item.module, "names": list(item.names), "level": item.level, "line": item.line}
+            {
+                "module": item.module,
+                "names": list(item.names),
+                "level": item.level,
+                "line": item.line,
+                "bindings": list(item.bindings or item.names),
+            }
             for item in imports
         ],
         separators=(",", ":"),

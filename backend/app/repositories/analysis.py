@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, or_, select
 
 from app.models.projects import AnalysisRun, SourceSnapshot
-from app.models.analysis import AnalysisDiagnostic, SourceFile, Symbol, SymbolCall
+from app.models.analysis import AnalysisDiagnostic, DependencyEdge, SourceFile, Symbol, SymbolCall
 from app.repositories.base import BaseRepository
 
 
@@ -41,12 +41,17 @@ class AnalysisRepository(BaseRepository):
         state: str,
         python_file_count: int,
         symbol_count: int,
+        edge_count: int = 0,
+        unresolved_reference_count: int = 0,
+        ambiguous_reference_count: int = 0,
         error_code: str | None = None,
     ) -> AnalysisRun:
         run.state = state
         run.python_file_count = python_file_count
         run.symbol_count = symbol_count
-        run.edge_count = 0  # dependency edges are built in Phase 5A
+        run.edge_count = edge_count
+        run.unresolved_reference_count = unresolved_reference_count
+        run.ambiguous_reference_count = ambiguous_reference_count
         run.error_code = error_code
         run.finished_at = utc_now()
         self.session.flush()
@@ -142,12 +147,66 @@ class SymbolRepository(BaseRepository):
             or 0
         )
 
+    def list_for_analysis(self, analysis_id: str) -> list[Symbol]:
+        """All symbols of one analysis in deterministic source order."""
+        return list(
+            self.session.scalars(
+                select(Symbol)
+                .where(Symbol.analysis_id == analysis_id)
+                .order_by(
+                    Symbol.file_path.asc(),
+                    Symbol.start_line.asc(),
+                    Symbol.start_column.asc(),
+                    Symbol.qualified_name.asc(),
+                )
+            ).all()
+        )
+
 
 class SymbolCallRepository(BaseRepository):
     def add_many(self, calls: list[SymbolCall]) -> None:
         if calls:
             self.session.add_all(calls)
             self.session.flush()
+
+    def list_for_analysis(self, analysis_id: str) -> list[SymbolCall]:
+        return list(
+            self.session.scalars(
+                select(SymbolCall)
+                .where(SymbolCall.analysis_id == analysis_id)
+                .order_by(
+                    SymbolCall.caller_symbol_id.asc(),
+                    SymbolCall.line.asc(),
+                    SymbolCall.column.asc(),
+                    SymbolCall.callee_expression.asc(),
+                )
+            ).all()
+        )
+
+
+class DependencyEdgeRepository(BaseRepository):
+    def add_many(self, edges: list[DependencyEdge]) -> None:
+        if edges:
+            self.session.add_all(edges)
+            self.session.flush()
+
+    def list_for_analysis(self, analysis_id: str) -> list[DependencyEdge]:
+        """All dependency edges of one analysis, deterministic by edge ID."""
+        return list(
+            self.session.scalars(
+                select(DependencyEdge)
+                .where(DependencyEdge.analysis_id == analysis_id)
+                .order_by(DependencyEdge.id.asc())
+            ).all()
+        )
+
+    def count(self, analysis_id: str) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count(DependencyEdge.id)).where(DependencyEdge.analysis_id == analysis_id)
+            )
+            or 0
+        )
 
 
 class DiagnosticRepository(BaseRepository):

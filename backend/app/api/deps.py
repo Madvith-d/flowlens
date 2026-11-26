@@ -10,6 +10,7 @@ from app.models.user import User
 from app.repositories.auth import OAuthStateRepository, UserSessionRepository
 from app.repositories.analysis import (
     AnalysisRepository,
+    DependencyEdgeRepository,
     DiagnosticRepository,
     SourceFileRepository,
     SymbolCallRepository,
@@ -20,6 +21,7 @@ from app.repositories.installations import GitHubInstallationRepository
 from app.repositories.projects import ProjectRepository, SnapshotRepository
 from app.repositories.users import UserRepository
 from app.services.analysis.service import AnalysisService
+from app.services.analysis.graph import AnalysisGraphService
 from app.services.auth.service import AUTH_REQUIRED, AuthService
 from app.services.github.service import GitHubInstallationService
 from app.services.ingestion.storage import SnapshotStorage
@@ -131,6 +133,7 @@ class ProjectsBundle:
             source_file_repo=SourceFileRepository(db),
             symbol_repo=SymbolRepository(db),
             call_repo=SymbolCallRepository(db),
+            edge_repo=DependencyEdgeRepository(db),
             diagnostic_repo=DiagnosticRepository(db),
             storage=SnapshotStorage(self.settings),
         )
@@ -160,6 +163,7 @@ class AnalysisBundle:
             source_file_repo=SourceFileRepository(db),
             symbol_repo=SymbolRepository(db),
             call_repo=SymbolCallRepository(db),
+            edge_repo=DependencyEdgeRepository(db),
             diagnostic_repo=DiagnosticRepository(db),
             storage=SnapshotStorage(self.settings),
         )
@@ -171,3 +175,29 @@ def get_analysis_bundle(
     db: Session = Depends(get_db),
 ) -> AnalysisBundle:
     return AnalysisBundle(request, db, user)
+
+
+class GraphBundle:
+    """Request-scoped wiring for graph query endpoints."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = AnalysisGraphService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            symbol_repo=SymbolRepository(db),
+            edge_repo=DependencyEdgeRepository(db),
+        )
+
+
+def get_graph_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> GraphBundle:
+    return GraphBundle(request, db, user)

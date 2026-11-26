@@ -129,10 +129,13 @@ def test_analysis_runs_and_populates_symbols(auth_client):
     assert analysis["state"] == "completed_with_warnings"  # app/broken.py has a syntax error
     assert analysis["python_file_count"] == 5
     assert analysis["symbol_count"] > 0
-    assert analysis["edge_count"] == 0  # graph edges are Phase 5A
+    # Phase 5A: resolved dependency edges (calls/imports/inheritance).
+    assert analysis["edge_count"] > 0
     summary = analysis["diagnostics_summary"]
     assert summary["syntax_errors"] == 1
     assert summary["skipped_files"] == 0
+    assert summary["unresolved_references"] > 0  # os/json/builtins stay unresolved
+    assert summary["ambiguous_references"] >= 0
 
     symbols = auth_client.get(f"/api/v1/analyses/{analysis['id']}/symbols").json()
     names = {item["qualified_name"] for item in symbols["items"]}
