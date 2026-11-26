@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, PlayCircle, Settings2, TriangleAlert } from "lucide-react";
+import { ArrowLeft, Network, PlayCircle, Settings2, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -259,7 +259,23 @@ export default function ProjectWorkspacePage() {
                       description="The analysis completed without parsing any Python files. Nothing to browse — check that the snapshot contains Python source."
                     />
                   ) : (
-                    <SymbolBrowser analysisId={analysis.id} />
+                    <>
+                      <Card>
+                        <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                          <p className="text-sm text-muted-foreground">
+                            Explore statically inferred dependencies between the analyzed
+                            symbols at module, class, and function level.
+                          </p>
+                          <Button asChild>
+                            <Link href={`/projects/${projectId}/graph?analysis=${analysis.id}`}>
+                              <Network aria-hidden="true" className="size-4" />
+                              Open dependency graph
+                            </Link>
+                          </Button>
+                        </CardContent>
+                      </Card>
+                      <SymbolBrowser analysisId={analysis.id} />
+                    </>
                   )
                 ) : pendingRun ? (
                   <p className="text-sm text-muted-foreground">

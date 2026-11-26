@@ -40,7 +40,13 @@ function withTimeout(timeoutMs: number, external?: AbortSignal): {
   };
 }
 
-type QueryParams = Record<string, string | number | boolean | undefined | null>;
+type QueryValue = string | number | boolean | readonly string[];
+/**
+ * Query parameter values. Array values (`node_kinds`, `edge_kinds`) are
+ * serialized as repeated params (`?kinds=a&kinds=b`), the standard OpenAPI
+ * `form` collection format.
+ */
+type QueryParams = Record<string, QueryValue | undefined | null>;
 
 export interface RequestOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -58,7 +64,12 @@ function buildUrl(path: string, query?: QueryParams): string {
   const url = new URL(`${API_BASE_URL}${path}`);
   if (query) {
     for (const [key, value] of Object.entries(query)) {
-      if (value !== undefined && value !== null) {
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          url.searchParams.append(key, item);
+        }
+      } else {
         url.searchParams.set(key, String(value));
       }
     }
