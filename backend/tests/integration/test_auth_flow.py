@@ -167,6 +167,7 @@ def test_expired_session_reports_unauthenticated(client, session_factory) -> Non
 
 def test_tampered_cookie_rejected(client) -> None:
     login(client)
+    client.cookies.clear()
     client.cookies.set(SESSION_COOKIE, "forged-session-id.deadbeef")
     me = client.get("/api/v1/auth/me")
     assert me.status_code == 200
