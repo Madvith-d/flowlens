@@ -305,3 +305,96 @@ export interface GraphResponse {
   /** Unresolved/ambiguous references recorded in diagnostics. */
   unresolved_count?: number;
 }
+
+// ------------------------------------------------------------------ impact
+
+/**
+ * `CoverageSummary` schema — counts per coverage status. Absent until
+ * Phase 7A attaches Coverage.py data; missing coverage is never zero.
+ */
+export interface CoverageSummary {
+  covered: number;
+  partially_covered: number;
+  uncovered: number;
+  unknown: number;
+}
+
+/** `RiskScore.factors[].key` enum — the versioned factor identities. */
+export type RiskFactorKey =
+  | "upstream_reachable_dependents"
+  | "in_degree_centrality"
+  | "downstream_breadth"
+  | "public_entry_point"
+  | "coverage_deficiency";
+
+/**
+ * `RiskScore.factors[]` schema. `weight` is the renormalized fraction
+ * actually applied (the backend renormalizes to sum 1 over included
+ * factors). Excluded factors carry `normalized_value: null`.
+ */
+export interface RiskFactor {
+  key: RiskFactorKey;
+  label: string;
+  weight: number;
+  raw_value?: number | null;
+  /** Null when the factor was excluded (e.g. coverage before Phase 7A). */
+  normalized_value: number | null;
+  included: boolean;
+  description?: string;
+}
+
+/** `RiskScore` schema — explainable, versioned, backend-computed only. */
+export interface RiskScore {
+  /** 0–100. A prioritization heuristic, never a failure probability. */
+  score: number;
+  version: string;
+  coverage_included: boolean;
+  factors: RiskFactor[];
+  caveats?: string[];
+}
+
+/** `ImpactResult.targets[]` echo of a requested target. */
+export interface ImpactTargetRef {
+  node_id: string;
+  qualified_name: string;
+}
+
+/** `ImpactNode.paths[]` — ordered edge IDs forming one representative path. */
+export interface ImpactPath {
+  edges: string[];
+}
+
+/** `ImpactNode` schema — one impacted symbol with per-target attribution. */
+export interface ImpactNode {
+  node_id: string;
+  kind: NodeKind;
+  qualified_name: string;
+  /** Direct (hop distance 1) vs transitive. */
+  direct: boolean;
+  min_hops: number;
+  /** At most one representative path per orientation (bounded payload). */
+  paths?: ImpactPath[];
+  attributed_to: string[];
+}
+
+/** `ImpactRequest` schema for `POST /analyses/{analysis_id}/impact`. */
+export interface ImpactRequest {
+  /** 1–10 target symbol/node IDs. */
+  target_ids: string[];
+  direction: ImpactDirection;
+  /** 1–10; contract default 3. */
+  max_depth?: number;
+}
+
+/** `ImpactResult` schema — the complete impact simulation response. */
+export interface ImpactResult {
+  analysis_id: ObjectId;
+  targets: ImpactTargetRef[];
+  direction: ImpactDirection;
+  max_depth?: number;
+  impacted: ImpactNode[];
+  truncated?: boolean;
+  risk: RiskScore;
+  warnings: string[];
+  coverage_summary?: CoverageSummary | null;
+}

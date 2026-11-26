@@ -16,6 +16,9 @@ export function GraphListView({
   edges,
   selectedNodeId,
   selectedEdgeId,
+  impactTargets,
+  impactDirect,
+  impactIndirect,
   onSelectNode,
   onSelectEdge,
 }: {
@@ -23,6 +26,10 @@ export function GraphListView({
   edges: readonly GraphEdge[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
+  /** Impact target/direct/indirect node IDs from a real impact result. */
+  impactTargets?: ReadonlySet<string>;
+  impactDirect?: ReadonlySet<string>;
+  impactIndirect?: ReadonlySet<string>;
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
 }) {
@@ -48,12 +55,18 @@ export function GraphListView({
                   <th scope="col" className="py-2 pr-4 font-medium">Kind</th>
                   <th scope="col" className="py-2 pr-4 font-medium">Name</th>
                   <th scope="col" className="py-2 pr-4 font-medium">Qualified name</th>
-                  <th scope="col" className="py-2 font-medium">File</th>
+                  <th scope="col" className="py-2 pr-4 font-medium">File</th>
+                  {impactTargets || impactDirect || impactIndirect ? (
+                    <th scope="col" className="py-2 font-medium">Impact</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
                 {nodes.map((node) => {
                   const isSelected = node.id === selectedNodeId;
+                  const isImpactTarget = impactTargets?.has(node.id) ?? false;
+                  const isDirect = impactDirect?.has(node.id) ?? false;
+                  const isIndirect = impactIndirect?.has(node.id) ?? false;
                   return (
                     <tr
                       key={node.id}
@@ -73,10 +86,23 @@ export function GraphListView({
                       <td className="py-2 pr-4 align-top">
                         <code className="text-xs">{node.qualified_name}</code>
                       </td>
-                      <td className="py-2 align-top text-xs">
+                      <td className="py-2 pr-4 align-top text-xs">
                         {node.file_path}
                         {node.location ? ` · lines ${node.location.start_line}–${node.location.end_line}` : ""}
                       </td>
+                      {impactTargets || impactDirect || impactIndirect ? (
+                        <td className="py-2 align-top">
+                          {isImpactTarget ? (
+                            <Badge>target</Badge>
+                          ) : isDirect ? (
+                            <Badge variant="success">direct impact</Badge>
+                          ) : isIndirect ? (
+                            <Badge variant="warning">indirect impact</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">not impacted</span>
+                          )}
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}

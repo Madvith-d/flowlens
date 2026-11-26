@@ -355,8 +355,14 @@ describe("graph workspace", () => {
     // The details panel opens with the node's qualified name.
     await screen.findByText(/Selected node/i);
 
-    await user.selectOptions(screen.getByLabelText(/depth/i), "2");
-    await user.selectOptions(screen.getByLabelText(/direction/i), "upstream");
+    await user.selectOptions(
+      within(screen.getByRole("group", { name: /expand/i })).getByLabelText(/depth/i),
+      "2"
+    );
+    await user.selectOptions(
+      within(screen.getByRole("group", { name: /expand/i })).getByLabelText(/direction/i),
+      "upstream"
+    );
     await user.click(screen.getByRole("button", { name: /expand neighbors/i }));
 
     await waitFor(() => {

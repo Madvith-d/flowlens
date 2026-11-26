@@ -25,6 +25,8 @@ import {
   EdgeDetailsPanel,
   NodeDetailsPanel,
 } from "@/features/graph/components/node-details-panel";
+import { ImpactPanel } from "@/features/impact/components/impact-panel";
+import type { ImpactHighlight } from "@/features/impact/impact-service";
 import type {
   GraphEdge,
   GraphNode,
@@ -233,6 +235,40 @@ export function GraphWorkspace({
     ? visibleEdges.find((edge) => edge.id === selectedEdgeId) ?? null
     : null;
 
+  // ---- impact highlighting (Phase 6B) -----------------------------------------
+  // Published by the impact panel from real impact results; the canvas,
+  // legend, and table view outline targets and direct/indirect impact.
+  const [impactHighlight, setImpactHighlight] = React.useState<ImpactHighlight | null>(null);
+  const handleImpactHighlightChange = React.useCallback(
+    (highlight: ImpactHighlight | null) => setImpactHighlight(highlight),
+    []
+  );
+  const impactTargetNodeIds = React.useMemo(
+    () => impactHighlight?.targetNodeIds ?? EMPTY_IDS,
+    [impactHighlight]
+  );
+  const impactDirectNodeIds = React.useMemo(
+    () => impactHighlight?.directNodeIds ?? EMPTY_IDS,
+    [impactHighlight]
+  );
+  const impactIndirectNodeIds = React.useMemo(
+    () => impactHighlight?.indirectNodeIds ?? EMPTY_IDS,
+    [impactHighlight]
+  );
+  const impactTargetSet = React.useMemo(
+    () => new Set(impactTargetNodeIds),
+    [impactTargetNodeIds]
+  );
+  const impactDirectSet = React.useMemo(() => new Set(impactDirectNodeIds), [impactDirectNodeIds]);
+  const impactIndirectSet = React.useMemo(
+    () => new Set(impactIndirectNodeIds),
+    [impactIndirectNodeIds]
+  );
+
+  const selectedQualifiedName = selectedNodeId
+    ? nodeDetail.data?.qualified_name ?? nodeById.get(selectedNodeId)?.qualified_name ?? null
+    : null;
+
   const totalNodes = baseGraph?.total_nodes;
   const visibleNodeCount = visibleNodes.length;
 
@@ -341,10 +377,14 @@ export function GraphWorkspace({
                 edges={visibleEdges}
                 selectedNodeId={selectedNodeId}
                 selectedEdgeId={selectedEdgeId}
+                impactTargets={impactTargetNodeIds}
+                impactDirect={impactDirectNodeIds}
+                impactIndirect={impactIndirectNodeIds}
+                impactPathEdges={impactHighlight?.pathEdgeIds ?? EMPTY_IDS}
                 onSelectNode={selectNode}
                 onSelectEdge={selectEdge}
               />
-              <GraphLegend />
+              <GraphLegend showImpact={impactHighlight !== null} />
             </div>
           ) : (
             <GraphListView
@@ -352,6 +392,9 @@ export function GraphWorkspace({
               edges={visibleEdges}
               selectedNodeId={selectedNodeId}
               selectedEdgeId={selectedEdgeId}
+              impactTargets={impactHighlight ? impactTargetSet : undefined}
+              impactDirect={impactHighlight ? impactDirectSet : undefined}
+              impactIndirect={impactHighlight ? impactIndirectSet : undefined}
               onSelectNode={(id) => selectNode(id)}
               onSelectEdge={(id) => selectEdge(id)}
             />
@@ -413,6 +456,23 @@ export function GraphWorkspace({
           relationships, metrics, and edge evidence.
         </p>
       )}
+
+      {/* Impact simulation (Phase 6B) — targets come from graph selection and
+          symbol search; results highlight targets/direct/indirect impact on
+          the canvas and in the table view. */}
+      <ImpactPanel
+        analysisId={analysisId}
+        selectedNodeId={selectedNodeId}
+        selectedQualifiedName={selectedQualifiedName}
+        visibleEdges={visibleEdges}
+        nodeById={nodeById}
+        onSelectNode={selectNode}
+        onSelectEdge={selectEdge}
+        onHighlightChange={handleImpactHighlightChange}
+      />
     </div>
   );
 }
+
+/** Stable empty array for optional impact-highlight props. */
+const EMPTY_IDS: readonly string[] = [];

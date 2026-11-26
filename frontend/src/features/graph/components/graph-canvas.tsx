@@ -22,6 +22,10 @@ export function GraphCanvas({
   edges,
   selectedNodeId,
   selectedEdgeId,
+  impactTargets,
+  impactDirect,
+  impactIndirect,
+  impactPathEdges,
   onSelectNode,
   onSelectEdge,
 }: {
@@ -29,6 +33,14 @@ export function GraphCanvas({
   edges: readonly GraphEdge[];
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
+  /** Impact-target node IDs to outline (from a real impact result). */
+  impactTargets?: readonly string[];
+  /** Directly impacted node IDs (hop distance 1). */
+  impactDirect?: readonly string[];
+  /** Indirectly (transitively) impacted node IDs. */
+  impactIndirect?: readonly string[];
+  /** Edge IDs of the focused representative paths. */
+  impactPathEdges?: readonly string[];
   onSelectNode: (nodeId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
 }) {
@@ -132,18 +144,42 @@ export function GraphCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, nodeSignature, edgeSignature]);
 
-  // ---- sync selection highlight ---------------------------------------------
+  // ---- sync selection + impact highlighting ---------------------------------
   React.useEffect(() => {
     const cy = cyRef.current;
     if (!ready || !cy) return;
-    cy.elements().removeClass("highlight");
+    const impactClasses = ["impact-target", "impact-direct", "impact-indirect", "impact-path"];
+    // Cytoscape takes space-separated class names here.
+    cy.elements().removeClass(["highlight", ...impactClasses].join(" "));
     if (selectedNodeId) {
       cy.getElementById(selectedNodeId).addClass("highlight");
     }
     if (selectedEdgeId) {
       cy.getElementById(selectedEdgeId).addClass("highlight");
     }
-  }, [ready, selectedNodeId, selectedEdgeId]);
+    // Impact classes come from real impact results and simply outline the
+    // affected elements; ids absent from the canvas are ignored.
+    for (const nodeId of impactTargets ?? []) {
+      cy.getElementById(nodeId).addClass("impact-target");
+    }
+    for (const nodeId of impactDirect ?? []) {
+      cy.getElementById(nodeId).addClass("impact-direct");
+    }
+    for (const nodeId of impactIndirect ?? []) {
+      cy.getElementById(nodeId).addClass("impact-indirect");
+    }
+    for (const edgeId of impactPathEdges ?? []) {
+      cy.getElementById(edgeId).addClass("impact-path");
+    }
+  }, [
+    ready,
+    selectedNodeId,
+    selectedEdgeId,
+    impactTargets,
+    impactDirect,
+    impactIndirect,
+    impactPathEdges,
+  ]);
 
   const zoomBy = (factor: number) => {
     const cy = cyRef.current;
@@ -261,5 +297,36 @@ const NODE_AND_EDGE_STYLES: cytoscape.StylesheetJson = [
   {
     selector: "edge.highlight",
     style: { width: 4, "line-color": "#2563eb" },
+  },
+  // Impact highlighting (Phase 6B): target/direct/indirect get distinct
+  // border styles + colors, restated as text in the legend and the table
+  // view — never color alone.
+  {
+    selector: "node.impact-target",
+    style: {
+      "border-width": 3,
+      "border-color": "#1d4ed8",
+      "border-style": "solid",
+    },
+  },
+  {
+    selector: "node.impact-direct",
+    style: {
+      "border-width": 3,
+      "border-color": "#15803d",
+      "border-style": "solid",
+    },
+  },
+  {
+    selector: "node.impact-indirect",
+    style: {
+      "border-width": 3,
+      "border-color": "#b45309",
+      "border-style": "dashed",
+    },
+  },
+  {
+    selector: "edge.impact-path",
+    style: { width: 4, "line-color": "#0e7490" },
   },
 ];
