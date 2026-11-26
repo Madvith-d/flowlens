@@ -47,3 +47,38 @@ class SnapshotStorage:
         if not snapshot_id or "/" in snapshot_id or snapshot_id in (".", ".."):
             raise UnsafeSnapshotPathError("invalid snapshot identifier")
         return os.path.join(self._root, snapshot_id)
+
+
+class ReportStorage:
+    """Stores generated report files under `storage_root/reports/`.
+
+    Paths are validated against the reports root the same way snapshot paths
+    are validated; stored paths never appear in API responses.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._root = os.path.realpath(os.path.join(settings.storage_root, "reports"))
+
+    def _report_root(self) -> str:
+        return self._root
+
+    def save(self, report_id: str, filename: str, content: str) -> str:
+        if not report_id or "/" in report_id or report_id in (".", ".."):
+            raise UnsafeSnapshotPathError("invalid report identifier")
+        if not filename or "/" in filename or filename in (".", ".."):
+            raise UnsafeSnapshotPathError("invalid report filename")
+        path = os.path.realpath(os.path.join(self._root, report_id + ".md"))
+        if not path.startswith(self._report_root() + os.sep):
+            raise UnsafeSnapshotPathError("report path escapes the storage root")
+        os.makedirs(self._report_root(), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return path
+
+    def read(self, stored_path: str) -> str:
+        path = os.path.realpath(stored_path)
+        if not path.startswith(self._report_root() + os.sep):
+            raise UnsafeSnapshotPathError("report path escapes the storage root")
+        with open(path, encoding="utf-8") as handle:
+            return handle.read()

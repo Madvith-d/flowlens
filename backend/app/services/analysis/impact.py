@@ -33,6 +33,7 @@ from app.repositories.analysis import (
     DependencyEdgeRepository,
     SymbolRepository,
 )
+from app.repositories.coverage import SymbolCoverageRepository
 from app.repositories.projects import ProjectRepository, SnapshotRepository
 from app.services.analysis.graph import (
     ANALYSIS_NOT_FOUND,
@@ -122,6 +123,7 @@ class ImpactService:
         analysis_repo: AnalysisRepository,
         symbol_repo: SymbolRepository,
         edge_repo: DependencyEdgeRepository,
+        symbol_coverage_repo=None,
     ) -> None:
         self._settings = settings
         self._projects = project_repo
@@ -129,6 +131,7 @@ class ImpactService:
         self._analyses = analysis_repo
         self._symbols = symbol_repo
         self._edges = edge_repo
+        self._symbol_coverage = symbol_coverage_repo
 
     # ------------------------------------------------------------------ guard
     def _owned_run(self, user: User, analysis_id: str):
@@ -257,7 +260,24 @@ class ImpactService:
                 }
             )
 
-        risk, risk_warnings = self._risk_payload(by_id, target_symbols, run, edge_rows)
+        coverage_summary = None
+        coverage_status: dict[str, str] = {}
+        if self._symbol_coverage is not None and self._symbol_coverage.has_any(run.id):
+            coverage_status = self._symbol_coverage.status_by_symbol(run.id)
+            covered = sum(1 for status in coverage_status.values() if status == "covered")
+            partial = sum(1 for status in coverage_status.values() if status == "partially_covered")
+            uncovered = sum(1 for status in coverage_status.values() if status == "uncovered")
+            total_symbols = len(by_id)
+            coverage_summary = {
+                "covered": covered,
+                "partially_covered": partial,
+                "uncovered": uncovered,
+                "unknown": max(total_symbols - covered - partial - uncovered, 0),
+            }
+
+        risk, risk_warnings = self._risk_payload(
+            by_id, target_symbols, run, edge_rows, coverage_status
+        )
         warnings.extend(risk_warnings)
         unresolved = run.unresolved_reference_count + run.ambiguous_reference_count
         if unresolved:
@@ -278,7 +298,7 @@ class ImpactService:
             "truncated": truncated,
             "risk": risk,
             "warnings": warnings,
-            "coverage_summary": None,  # coverage attaches in Phase 7A
+            "coverage_summary": coverage_summary,  # attaches once data exists (Phase 7A)
         }
 
     # --------------------------------------------------------------- internals
@@ -319,7 +339,9 @@ class ImpactService:
             in_neighbors[node] = sorted(in_neighbors[node], key=sort_key)
         return out_neighbors, in_neighbors, edge_of
 
-    def _risk_payload(self, by_id, target_symbols, run, edge_rows) -> tuple[dict, list[str]]:
+    def _risk_payload(
+        self, by_id, target_symbols, run, edge_rows, coverage_status: dict | None = None
+    ) -> tuple[dict, list[str]]:
         """Explainable risk over the targets (see risk.py for the model)."""
         graph = nx.DiGraph()
         graph.add_nodes_from(by_id.keys())
@@ -355,8 +377,29 @@ class ImpactService:
                     public_count += 1
         public_fraction = (public_count / len(target_symbols)) if target_symbols else 0.0
 
-        risk = compute_risk(
-            version=self._settings.risk_score_version,
+        coverage_present = bool(coverage_status)
+        coverage_deficiency = None
+        warnings: list[str] = []
+        if coverage_present:
+            deficient = 0
+            for symbol in target_symbols:
+                status = coverage_status.get(symbol.id, "unknown")
+                if status != "covered":
+                    deficient += 1
+            coverage_deficiency = deficient / len(target_symbols) if target_symbols else 0.0
+            unknown_targets = [
+                symbol.qualified_name
+                for symbol in target_symbols
+                if coverage_status.get(symbol.id, "unknown") == "unknown"
+            ]
+            if unknown_targets:
+                warnings.append(
+                    "Coverage data is attached but does not cover"
+                    f" {len(unknown_targets)} of the requested target symbol(s);"
+                    " their coverage stays unknown and counts as deficient here."
+                )
+
+        risk = compute_risk(            version=self._settings.risk_score_version,
             weights={
                 "upstream_reachable_dependents": self._settings.risk_weight_upstream_dependents,
                 "in_degree_centrality": self._settings.risk_weight_in_degree,
@@ -370,6 +413,7 @@ class ImpactService:
             max_target_in_degree=max_in_degree,
             graph_max_in_degree=graph_max_in_degree,
             public_entry_fraction=public_fraction,
-            coverage_present=False,  # coverage data attaches in Phase 7A
+            coverage_present=coverage_present,
+            coverage_deficiency=coverage_deficiency,
         )
-        return risk, []
+        return risk, warnings

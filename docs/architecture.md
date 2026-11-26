@@ -137,11 +137,31 @@ changes must be made there first, coordinated between contributors.
   the contract. Configurable weights (default 35/20/15/15/15) cover normalized
   upstream reachable dependents, in-degree centrality, downstream breadth, a
   structural public/entry-point indicator, and coverage deficiency; with no
-  coverage attached (until Phase 7A) the coverage factor is excluded, the
-  remaining weights are renormalized, and the fact is disclosed via
-  `coverage_included: false` plus caveats. Every factor reports its raw value,
-  normalized value, and applied weight; unresolvable reachability (metrics
-  budget exceeded) removes factors rather than estimating them.
+  coverage attached the coverage factor is excluded, the remaining weights
+  are renormalized, and the fact is disclosed via `coverage_included: false`
+  plus caveats. Every factor reports its raw value, normalized value, and
+  applied weight; unresolvable reachability (metrics budget exceeded) removes
+  factors rather than estimating them.
+- **Diff, coverage and reports complete the review loop (Phase 7A)**
+  (`services/analysis/diffmap.py`, `coverage.py`, `reports.py`).
+  `POST /analyses/{id}/diff` parses a unified diff and maps changed lines
+  (new- and old-side) onto stored symbol spans — added/modified/deleted per
+  symbol, module-level changes and paths missing from the snapshot reported
+  unmapped with explicit reasons — then computes a combined impact (per-target
+  attribution, capped to the 10-target contract bound).
+  `POST /analyses/{id}/coverage` validates a Coverage.py JSON artifact
+  with strict schema checks and conservative path matching, classifying each
+  symbol covered / partially_covered / uncovered / unknown; missing coverage
+  is `unknown`, never zero, and re-attachment atomically replaces the mapping.
+  Attached coverage populates `coverage_summary` on impact responses, activates
+  the risk coverage factor, and powers `coverage_status` on graph nodes.
+  `POST /analyses/{id}/reports` renders deterministic Markdown from the stored
+  analysis/impact/coverage data (escaped table cells, fixed ordering,
+  metadata/targets/impact/risk/coverage/diagnostics/exclusions sections;
+  identical inputs produce byte-identical documents) and stores it via
+  `ReportStorage`; `GET /reports/{id}/download` streams the artifact with an
+  attachment filename. All three enforce per-user analysis ownership and
+  completion.
 
 ## Security invariants
 

@@ -3,7 +3,7 @@
 **Contributor:** Madvith (backend, GitHub integration, analysis engine)
 **Current branch:** `madvith` (backend workstream, based on `main` `1013aeb`
 after the Phase 5A and 5B merges)
-**Phase:** 6A complete (impact analysis and explainable risk scoring)
+**Phase:** 7A complete (diff mapping, coverage mapping, Markdown reports)
 
 ## Completed work
 
@@ -122,10 +122,46 @@ kept structural, SCC-condensation reachability, bounded `/graph` + `/nodes` +
 - Path edge IDs and graph edge IDs now come from one shared function, so
   clients can correlate impact paths with graph edges. No schema changes.
 
+
+## Phase 7A — Diff, coverage and report services — done
+
+- `app/services/analysis/diffmap.py`: unified diff parser (git-style headers
+  or `---`/`+++` pairs, multiple files/hunks, added/deleted files) mapping
+  changed lines (new- and old-side) onto stored symbol spans. Per-symbol
+  classification added/modified/deleted; module symbols are deliberately not
+  mapping targets so module-level changes are reported unmapped with an
+  explicit reason; paths missing from the snapshot stay unmapped with a
+  warning. Combined impact inherits the impact service (per-target
+  attribution, deduplication, risk) with the mapped symbols capped to the
+  10-target contract bound.
+- `app/services/analysis/coverage.py`: strict Coverage.py JSON schema
+  validation, conservative path normalization (exact, `a/`/`b/`/`./` prefixes,
+  unique suffix match only) and per-symbol covered/partially_covered/
+  uncovered/unknown classification. Missing coverage is `unknown`, never
+  zero. Re-attachment replaces the previous mapping atomically.
+- `coverage_files` / `symbol_coverage` tables (migration `e5b8f2a07c31`).
+- `app/services/analysis/reports.py` + `ReportStorage`: deterministic
+  Markdown reports generated from stored analysis/impact/coverage data with
+  table-cell escaping (pipes/backslashes/newlines), deterministic ordering,
+  metadata (project, provider, snapshot ref/commit, versions, direction,
+  depth), targets, impacted nodes, risk factors and caveats, coverage
+  section (summary + per-symbol rows, or explicit no-artifact state),
+  diagnostics summary, exclusions/caveats. Same inputs produce
+  byte-identical reports.
+- Impact integration: `coverage_summary` is populated once coverage is
+  attached; the risk `coverage_deficiency` factor (weight 0.15) activates,
+  counting targets that are not fully covered (unknown stays deficient and is
+  disclosed in a warning). Graph nodes expose real `coverage_status` (from
+  `unknown` by default).
+- New endpoints (frozen contract): `POST /analyses/{id}/diff` (422
+  `DIFF_INVALID`), `POST /analyses/{id}/coverage` (400 `COVERAGE_INVALID`),
+  `POST /analyses/{id}/reports` (201 `ReportInfo`),
+  `GET /reports/{id}/download` (`text/markdown`, attachment filename). All
+  enforce analysis ownership + completion; every existing test still passes.
+
 ## Next smallest actionable task
 
-Phase 7A start: unified diff parsing (headers/hunks, line-range mapping to
-symbol spans, added/modified/deleted/unmapped classification) feeding the
-combined-impact calculation with per-target attribution.
+Phase 7B (Sameeksha): diff/coverage/report UI — diff paste/upload and
+changed-file/symbol summary, coverage overlay, report preview and download.
 
 

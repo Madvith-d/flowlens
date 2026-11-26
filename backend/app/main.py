@@ -13,6 +13,9 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api.v1.analyses import router as analyses_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.coverage import router as coverage_router
+from app.api.v1.diff import router as diff_router
+from app.api.v1.reports import router as reports_router
 from app.api.v1.github import router as github_router
 from app.api.v1.graph import router as graph_router
 from app.api.v1.impact import router as impact_router
@@ -85,6 +88,9 @@ def create_app(
     app.include_router(analyses_router)
     app.include_router(graph_router)
     app.include_router(impact_router)
+    app.include_router(diff_router)
+    app.include_router(coverage_router)
+    app.include_router(reports_router)
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:

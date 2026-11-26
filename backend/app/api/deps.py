@@ -2,12 +2,13 @@
 
 from collections.abc import Generator
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.models.auth import UserSession
 from app.models.user import User
 from app.repositories.auth import OAuthStateRepository, UserSessionRepository
+from app.repositories.coverage import CoverageFileRepository, SymbolCoverageRepository
 from app.repositories.analysis import (
     AnalysisRepository,
     DependencyEdgeRepository,
@@ -23,9 +24,12 @@ from app.repositories.users import UserRepository
 from app.services.analysis.service import AnalysisService
 from app.services.analysis.graph import AnalysisGraphService
 from app.services.analysis.impact import ImpactService
+from app.services.analysis.diffmap import DiffService
+from app.services.analysis.coverage import CoverageService
+from app.services.analysis.reports import ReportService
 from app.services.auth.service import AUTH_REQUIRED, AuthService
 from app.services.github.service import GitHubInstallationService
-from app.services.ingestion.storage import SnapshotStorage
+from app.services.ingestion.storage import ReportStorage, SnapshotStorage
 from app.services.projects.service import ProjectService
 
 
@@ -193,6 +197,7 @@ class GraphBundle:
             analysis_repo=AnalysisRepository(db),
             symbol_repo=SymbolRepository(db),
             edge_repo=DependencyEdgeRepository(db),
+            symbol_coverage_repo=SymbolCoverageRepository(db),
         )
 
 
@@ -211,6 +216,7 @@ class ImpactBundle:
             analysis_repo=AnalysisRepository(db),
             symbol_repo=SymbolRepository(db),
             edge_repo=DependencyEdgeRepository(db),
+            symbol_coverage_repo=SymbolCoverageRepository(db),
         )
 
 
@@ -228,3 +234,111 @@ def get_graph_bundle(
     db: Session = Depends(get_db),
 ) -> GraphBundle:
     return GraphBundle(request, db, user)
+
+
+class DiffBundle:
+    """Request-scoped wiring for the diff mapping endpoint."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = DiffService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            symbol_repo=SymbolRepository(db),
+            impact_service=ImpactService(
+                settings=self.settings,
+                project_repo=ProjectRepository(db),
+                snapshot_repo=SnapshotRepository(db),
+                analysis_repo=AnalysisRepository(db),
+                symbol_repo=SymbolRepository(db),
+                edge_repo=DependencyEdgeRepository(db),
+                symbol_coverage_repo=SymbolCoverageRepository(db),
+            ),
+        )
+
+
+def get_diff_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> DiffBundle:
+    return DiffBundle(request, db, user)
+
+
+class CoverageBundle:
+    """Request-scoped wiring for the coverage attach endpoint."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = CoverageService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            symbol_repo=SymbolRepository(db),
+            coverage_file_repo=CoverageFileRepository(db),
+            symbol_coverage_repo=SymbolCoverageRepository(db),
+        )
+
+
+def get_coverage_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> CoverageBundle:
+    return CoverageBundle(request, db, user)
+
+
+class ReportBundle:
+    """Request-scoped wiring for report generation/download endpoints."""
+
+    def __init__(self, request: Request, db: Session, user: User):
+        self.request = request
+        self.db = db
+        self.settings = request.app.state.settings
+        self.user = user
+        self.service = ReportService(
+            settings=self.settings,
+            project_repo=ProjectRepository(db),
+            snapshot_repo=SnapshotRepository(db),
+            analysis_repo=AnalysisRepository(db),
+            symbol_repo=SymbolRepository(db),
+            source_file_repo=SourceFileRepository(db),
+            diagnostics_repo=DiagnosticRepository(db),
+            coverage_file_repo=CoverageFileRepository(db),
+            symbol_coverage_repo=SymbolCoverageRepository(db),
+            impact_service=ImpactService(
+                settings=self.settings,
+                project_repo=ProjectRepository(db),
+                snapshot_repo=SnapshotRepository(db),
+                analysis_repo=AnalysisRepository(db),
+                symbol_repo=SymbolRepository(db),
+                edge_repo=DependencyEdgeRepository(db),
+                symbol_coverage_repo=SymbolCoverageRepository(db),
+            ),
+            report_storage=ReportStorage(self.settings),
+        )
+
+    def download(self, report_id: str):
+        content, filename, _fmt = self.service.download(self.user, report_id)
+        return Response(
+            content=content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+
+def get_report_bundle(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db),
+) -> ReportBundle:
+    return ReportBundle(request, db, user)
