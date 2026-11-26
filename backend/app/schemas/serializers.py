@@ -128,3 +128,14 @@ def symbol_view(symbol) -> dict:
         },
         "parent_id": symbol.parent_id,
     }
+
+
+def report_view(report) -> dict:
+    """Report contract payload (stored paths never appear in responses)."""
+    return {
+        "id": report.id,
+        "analysis_id": report.analysis_id,
+        "format": report.format,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "filename": report.filename,
+    }

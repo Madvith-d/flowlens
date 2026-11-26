@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     risk_weight_coverage_deficiency: float = 0.15
     # Reachability sizes are normalized against this cap (bounded in [0, 1]).
     risk_normalization_cap: int = 100
+    # Diff/coverage/report bounds (Phase 7A): request size and file-count
+    # budgets stay bounded; impact depth over mapped diff symbols follows the
+    # same contract constraints as the impact endpoint.
+    diff_max_files: int = 200
+    diff_max_bytes: int = 512 * 1024
+    diff_impact_max_depth: int = 3
+    coverage_max_files: int = 10_000
 
     # --- Versions recorded on analysis runs ---
     flowlens_version: str = "0.1.0"

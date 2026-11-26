@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, or_, select
 
-from app.models.projects import AnalysisRun, SourceSnapshot
+from app.models.projects import AnalysisRun, Report, SourceSnapshot
 from app.models.analysis import AnalysisDiagnostic, DependencyEdge, SourceFile, Symbol, SymbolCall
 from app.repositories.base import BaseRepository
 
@@ -80,6 +80,19 @@ class AnalysisRepository(BaseRepository):
         for project_id, run in rows:
             latest[project_id] = run  # ascending order → last wins
         return latest
+
+
+    # ----------------------------------------------------------------- reports
+    def add_report(self, report) -> None:
+        if report.id is None:
+            from app.models.user import new_object_id
+
+            report.id = new_object_id()
+        self.session.add(report)
+        self.session.flush()
+
+    def get_report(self, report_id: str):
+        return self.session.get(Report, report_id)
 
 
 class SourceFileRepository(BaseRepository):

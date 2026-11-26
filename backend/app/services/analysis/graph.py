@@ -106,6 +106,7 @@ class AnalysisGraphService:
         analysis_repo: AnalysisRepository,
         symbol_repo: SymbolRepository,
         edge_repo: DependencyEdgeRepository,
+        symbol_coverage_repo=None,
     ) -> None:
         self._settings = settings
         self._projects = project_repo
@@ -113,6 +114,7 @@ class AnalysisGraphService:
         self._analyses = analysis_repo
         self._symbols = symbol_repo
         self._edges = edge_repo
+        self._symbol_coverage = symbol_coverage_repo
 
     # ----------------------------------------------------------------- guard
     def _owned_run(self, user: User, analysis_id: str) -> AnalysisRun:
@@ -155,7 +157,7 @@ class AnalysisGraphService:
         stored = self._stored_edges(run.id)
         graph = self._dependency_nx(symbols, stored)
         metrics = self._metrics_for(graph, node_id)
-        return self._node_payload(target, metrics)
+        return self._node_payload(target, metrics, self._coverage_status(run.id))
 
     def neighbors(
         self,
@@ -326,7 +328,11 @@ class AnalysisGraphService:
         dependency_nx = self._collapsed_dependency_nx(collapsed, served_ids)
         metrics = self._metrics_map(dependency_nx, served_ids)
 
-        node_payloads = [self._node_payload(symbol, metrics.get(symbol.id)) for symbol in ordered_reps]
+        coverage_status = self._coverage_status(run.id)
+        node_payloads = [
+            self._node_payload(symbol, metrics.get(symbol.id), coverage_status)
+            for symbol in ordered_reps
+        ]
         ordered_edges = []
         total_edges = len(collapsed)
         for (source_id, target_id, kind) in sorted(collapsed):
@@ -511,12 +517,22 @@ class AnalysisGraphService:
         return sorted(visited)
 
     # -------------------------------------------------------------- payloads
-    def _node_payload(self, symbol: Symbol, metrics: dict | None) -> dict:
+    def _coverage_status(self, analysis_id: str) -> dict[str, str]:
+        """Per-symbol coverage from an attached Coverage.py artifact (Phase 7A).
+
+        No repo wired or no artifact attached → empty map; every node then
+        reports `unknown`, which is the correct answer, not a fallback zero.
+        """
+        if self._symbol_coverage is None or not self._symbol_coverage.has_any(analysis_id):
+            return {}
+        return self._symbol_coverage.status_by_symbol(analysis_id)
+
+    def _node_payload(self, symbol: Symbol, metrics: dict | None, coverage_status: dict | None = None) -> dict:
         from app.schemas.serializers import symbol_view
 
         payload = symbol_view(symbol)
         payload["metrics"] = metrics or {}
-        payload["coverage_status"] = "unknown"  # coverage lands in Phase 7A
+        payload["coverage_status"] = (coverage_status or {}).get(symbol.id, "unknown")
         return payload
 
     _view_edge_id = staticmethod(view_edge_id)
