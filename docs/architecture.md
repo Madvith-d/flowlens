@@ -87,6 +87,39 @@ changes must be made there first, coordinated between contributors.
   stops the rest of the snapshot from being analysed. Call expressions are stored
   as expressions only — resolution (with evidence and confidence) is Phase 5A.
 
+## Resolution and dependency graph (implemented: Phase 5A)
+
+- **Resolution happens after extraction, on stored records.** The resolver
+  (`services/analysis/resolver.py`) consumes plain symbol/call/import records —
+  not ASTs and not ORM rows — so any future extraction pipeline can reuse it
+  (`DependencyResolver` protocol). It resolves lexical module-local calls,
+  imports and aliases (`import x as y`, `from m import n as z`, relative
+  imports), module-qualified calls, `self.method()` against the lexical class,
+  inherited methods through resolvable bases, unsuffixed class-method calls,
+  and class bases (INHERITS). External imports (stdlib/third-party) are out of
+  scope: they produce no edge and no diagnostic.
+- **Every edge is typed, evidenced, and deduplicated.** Edges are unique per
+  `(source, target, kind)` with a stable ID; each stores the producing resolver
+  name, the most conservative contributing confidence, and bounded evidence
+  locations (file, line, column, expression). Ambiguous references (duplicate
+  symbol names) and unresolved references (dynamic calls, unknown receivers)
+  are recorded as diagnostics with exact occurrence counters on the run —
+  nothing is ever silently guessed.
+- **`CONTAINS` is structural, never a dependency.** It is derived from
+  `Symbol.parent_id` at graph-build time and excluded from traversals and
+  metrics; `dependency_edges` stores only CALLS / IMPORTS / INHERITS /
+  REFERENCES.
+- **Graph queries are bounded and deterministic.** `services/analysis/graph.py`
+  builds a per-analysis NetworkX graph and serves three views (`module`,
+  `class`, `function` collapse, each documented in the service), node-kind and
+  edge-kind filters, node limits with explicit `truncated`, node detail with
+  in/out-degree and reachable counts, and depth/direction-limited neighborhood
+  expansion. Reachability is computed via SCC condensation over the dependency
+  graph (cycle-safe) and only while the graph is within the configured metrics
+  budget (`GRAPH_METRICS_MAX_NODES`); beyond it, degrees are still served and
+  reachability is omitted rather than estimated. Graph endpoints answer 409
+  `ANALYSIS_NOT_READY` until the analysis completes.
+
 ## Security invariants
 
 - Analyzed source is never executed or imported.

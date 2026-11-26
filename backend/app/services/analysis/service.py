@@ -1,24 +1,29 @@
-"""Static analysis service: create runs, parse snapshots, serve symbol catalog.
+"""Static analysis service: create runs, parse snapshots, resolve dependencies.
 
-Phase 4A scope. Runs execute inline (single-process) and persist per-analysis
-records; the API still models the run lifecycle (`queued` → `running` →
-`completed` / `completed_with_warnings` / `failed`) so a worker-based runner can
-replace the inline call without changing the contract.
+Runs execute inline (single-process) and persist per-analysis records; the API
+still models the run lifecycle (`queued` → `running` → `completed` /
+`completed_with_warnings` / `failed`) so a worker-based runner can replace the
+inline call without changing the contract. Parsing (Phase 4A) is followed by
+dependency resolution (Phase 5A): stored symbols and call expressions become
+typed, deduplicated edges with source evidence, and unresolved or ambiguous
+references become explicit diagnostics — never guessed edges.
 
-The analyzed source is only ever read and parsed — never imported, executed, or
-installed.
+The analyzed source is only ever read and parsed — never imported, executed,
+or installed.
 """
 
+import json
 import logging
 from pathlib import Path
 
 from app.core.config import Settings
 from app.core.errors import ApiError
-from app.models.analysis import AnalysisDiagnostic, SourceFile, Symbol, SymbolCall
+from app.models.analysis import AnalysisDiagnostic, DependencyEdge, SourceFile, Symbol, SymbolCall
 from app.models.projects import AnalysisRun, SourceSnapshot
 from app.models.user import User
 from app.repositories.analysis import (
     AnalysisRepository,
+    DependencyEdgeRepository,
     DiagnosticRepository,
     SourceFileRepository,
     SymbolCallRepository,
@@ -30,6 +35,15 @@ from app.services.analysis.parser import (
     parse_python_file,
     symbol_imports_to_json,
     symbol_json_list,
+)
+from app.services.analysis.resolver import (
+    CallRecord,
+    Evidence,
+    ResolutionResult,
+    StaticResolver,
+    SymbolRecord,
+    edge_id,
+    import_records_from_json,
 )
 from app.services.ingestion.archive import DEFAULT_EXCLUDED_PARTS
 from app.services.ingestion.storage import SnapshotStorage, UnsafeSnapshotPathError
@@ -63,6 +77,7 @@ class AnalysisService:
         source_file_repo: SourceFileRepository,
         symbol_repo: SymbolRepository,
         call_repo: SymbolCallRepository,
+        edge_repo: DependencyEdgeRepository,
         diagnostic_repo: DiagnosticRepository,
         storage: SnapshotStorage,
     ) -> None:
@@ -73,6 +88,7 @@ class AnalysisService:
         self._files = source_file_repo
         self._symbols = symbol_repo
         self._calls = call_repo
+        self._edges = edge_repo
         self._diagnostics = diagnostic_repo
         self._storage = storage
 
@@ -231,9 +247,18 @@ class AnalysisService:
         self._files.add_many(source_files)
         self._symbols.add_many(symbols)
         self._calls.add_many(calls)
-        self._diagnostics.add_many(diagnostics)
 
-        warnings = any(item.severity in ("error", "warning") for item in diagnostics)
+        self._diagnostics.add_many(diagnostics)
+        resolution = self._resolve_dependencies(run, snapshot)
+        unresolved = resolution.unresolved_count
+        ambiguous = resolution.ambiguous_count
+
+        warnings = (
+            any(item.severity in ("error", "warning") for item in diagnostics)
+            or resolution.diagnostics
+            or unresolved
+            or ambiguous
+        )
         state = "completed_with_warnings" if warnings else "completed"
         logger.info(
             "analysis finished",
@@ -243,6 +268,9 @@ class AnalysisService:
                     "files": len(source_files),
                     "symbols": len(symbols),
                     "calls": len(calls),
+                    "edges": len(resolution.edges),
+                    "unresolved": unresolved,
+                    "ambiguous": ambiguous,
                     "state": state,
                 }
             },
@@ -252,11 +280,94 @@ class AnalysisService:
             state=state,
             python_file_count=len(source_files),
             symbol_count=len(symbols),
+            edge_count=len(resolution.edges),
+            unresolved_reference_count=unresolved,
+            ambiguous_reference_count=ambiguous,
         )
+
+    # ------------------------------------------------------------- resolution
+    def _resolve_dependencies(
+        self, run: AnalysisRun, snapshot: SourceSnapshot
+    ) -> ResolutionResult:
+        """Resolve stored symbols/calls into typed dependency edges (Phase 5A).
+
+        Unresolvable or ambiguous references become explicit diagnostics; the
+        run's counters stay exact even when diagnostic rows are capped.
+        """
+        resolver = StaticResolver(run.id)
+        symbol_rows = self._symbols.list_for_analysis(run.id)
+        call_rows = self._calls.list_for_analysis(run.id)
+        records = [_symbol_record(row) for row in symbol_rows]
+        calls = [
+            CallRecord(
+                caller_id=row.caller_symbol_id,
+                expression=row.callee_expression,
+                line=row.line,
+                column=row.column,
+            )
+            for row in call_rows
+        ]
+        result = resolver.resolve(
+            records,
+            calls,
+            max_evidence_per_edge=self._settings.analysis_max_evidence_per_edge,
+            max_reference_diagnostics=self._settings.analysis_max_reference_diagnostics,
+        )
+        edges: list[DependencyEdge] = []
+        for record in result.edges[: self._settings.analysis_max_edges]:
+            edges.append(
+                DependencyEdge(
+                    id=edge_id(run.id, record.source_id, record.target_id, record.kind),
+                    analysis_id=run.id,
+                    source_id=record.source_id,
+                    target_id=record.target_id,
+                    kind=record.kind,
+                    confidence=record.confidence,
+                    resolver=record.resolver,
+                    evidence=evidence_to_json(record.evidence),
+                )
+            )
+        self._edges.add_many(edges)
+        self._diagnostics.add_many(
+            [
+                AnalysisDiagnostic(
+                    analysis_id=run.id,
+                    file_path=item.file_path,
+                    severity=item.severity,
+                    code=item.code,
+                    message=item.message,
+                    line=item.line,
+                    column=item.column,
+                )
+                for item in result.diagnostics
+            ]
+        )
+        if len(result.edges) > self._settings.analysis_max_edges:
+            self._diagnostics.add_many(
+                [
+                    AnalysisDiagnostic(
+                        analysis_id=run.id,
+                        file_path=None,
+                        severity="warning",
+                        code="UNRESOLVED_LIMIT_REACHED",
+                        message=(
+                            "Dependency edge budget reached; remaining references were"
+                            " resolved but not stored as graph edges."
+                        ),
+                    )
+                ]
+            )
+        return result
 
     # ------------------------------------------------------------------ reads
     def diagnostics_summary(self, analysis_id: str) -> dict[str, int]:
-        return self._diagnostics.summary(analysis_id)
+        run = self._analyses.get(analysis_id)
+        summary = self._diagnostics.summary(analysis_id)
+        if run is not None:
+            # Exact occurrence counters from the resolver (rows may be capped).
+            summary["unresolved_references"] = run.unresolved_reference_count
+            summary["ambiguous_references"] = run.ambiguous_reference_count
+        return summary
 
     def list_symbols(
         self,
@@ -280,3 +391,35 @@ class AnalysisService:
 
     def latest_for_projects(self, project_ids: list[str]) -> dict[str, AnalysisRun]:
         return self._analyses.latest_for_projects(project_ids)
+
+
+# ---------------------------------------------------------------- record helpers
+def _symbol_record(symbol: Symbol) -> SymbolRecord:
+    """ORM symbol row → resolver record (base/import JSON → tuples)."""
+    bases = json.loads(symbol.bases or "[]")
+    return SymbolRecord(
+        id=symbol.id,
+        kind=symbol.kind,
+        name=symbol.name,
+        qualified_name=symbol.qualified_name,
+        file_path=symbol.file_path,
+        parent_id=symbol.parent_id,
+        start_line=symbol.start_line,
+        bases=tuple(str(base) for base in bases),
+        imports=import_records_from_json(symbol.imports),
+    )
+
+
+def evidence_to_json(evidence: tuple[Evidence, ...]) -> str:
+    return json.dumps(
+        [
+            {
+                "file_path": item.file_path,
+                "line": item.line,
+                "column": item.column,
+                "expression": item.expression,
+            }
+            for item in evidence
+        ],
+        separators=(",", ":"),
+    )

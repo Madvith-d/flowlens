@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # Static analysis bounds (kept deterministic and bounded; never execute code).
     analysis_max_symbols: int = 100_000
     analysis_max_calls_per_symbol: int = 2_000
+    # Resolver bounds (Phase 5A): evidence kept per deduplicated edge, rows kept
+    # for unresolved/ambiguous references (occurrence counters stay exact), and
+    # an overall dependency-edge budget per analysis run.
+    analysis_max_evidence_per_edge: int = 10
+    analysis_max_reference_diagnostics: int = 1_000
+    analysis_max_edges: int = 200_000
+    # Graph query bounds: reachability metrics are only computed while the
+    # dependency graph stays within this node budget; responses cap edges.
+    graph_metrics_max_nodes: int = 10_000
+    graph_max_edges_per_response: int = 5_000
 
     # --- Versions recorded on analysis runs ---
     flowlens_version: str = "0.1.0"

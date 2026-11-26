@@ -21,7 +21,13 @@ DIAGNOSTIC_CODES = (
     "FILE_SKIPPED",
     "SYMBOL_LIMIT_REACHED",
     "NO_PYTHON_FILES",
+    "UNRESOLVED_REFERENCE",
+    "AMBIGUOUS_REFERENCE",
+    "UNRESOLVED_LIMIT_REACHED",
 )
+EDGE_KINDS = ("CALLS", "IMPORTS", "INHERITS", "REFERENCES")
+DEPENDENCY_EDGE_KINDS = ("CALLS", "IMPORTS", "INHERITS", "REFERENCES")
+CONFIDENCE_LEVELS = ("high", "medium", "low")
 
 
 class SourceFile(Base, TimestampMixin):
@@ -99,6 +105,35 @@ class SymbolCall(Base, TimestampMixin):
     callee_expression: Mapped[str] = mapped_column(String(512), nullable=False)
     line: Mapped[int] = mapped_column(Integer, nullable=False)
     column: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class DependencyEdge(Base, TimestampMixin):
+    """One typed, deduplicated dependency edge between two symbols of an analysis.
+
+    `CONTAINS` is structural and never stored here — it is derived from
+    `Symbol.parent_id` at graph-build time and stays separate from dependency
+    edges in traversals. Aggregated edges keep a bounded evidence list and the
+    weakest (most conservative) confidence of the resolutions that produced
+    them; the `resolver` names the best-priority strategy that contributed.
+    """
+
+    __tablename__ = "dependency_edges"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "source_id", "target_id", "kind", name="uq_dependency_edges_edge"),
+        Index("ix_dependency_edges_analysis_source", "analysis_id", "source_id"),
+        Index("ix_dependency_edges_analysis_target", "analysis_id", "target_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    analysis_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("analysis_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[str] = mapped_column(String(16), nullable=False)
+    resolver: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
 
 class AnalysisDiagnostic(Base, TimestampMixin):

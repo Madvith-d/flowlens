@@ -73,6 +73,10 @@ class AnalysisRun(Base, TimestampMixin):
     python_file_count: Mapped[int] = mapped_column(nullable=False, default=0)
     symbol_count: Mapped[int] = mapped_column(nullable=False, default=0)
     edge_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    # Exact resolver counters (occurrences, not diagnostic rows) powering the
+    # diagnostics summary; rows are capped by settings.
+    unresolved_reference_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    ambiguous_reference_count: Mapped[int] = mapped_column(nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
