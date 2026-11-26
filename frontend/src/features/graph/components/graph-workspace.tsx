@@ -269,6 +269,14 @@ export function GraphWorkspace({
     ? nodeDetail.data?.qualified_name ?? nodeById.get(selectedNodeId)?.qualified_name ?? null
     : null;
 
+  // Coverage overlay (Phase 7B): active when the graph reports at least one
+  // coverage status (i.e. a Coverage.py artifact was attached to this
+  // analysis). Node-level statuses still render per node.
+  const coverageOverlay = React.useMemo(
+    () => visibleNodes.some((node) => node.coverage_status !== undefined),
+    [visibleNodes]
+  );
+
   const totalNodes = baseGraph?.total_nodes;
   const visibleNodeCount = visibleNodes.length;
 
@@ -280,9 +288,16 @@ export function GraphWorkspace({
             <ArrowLeft aria-hidden="true" className="size-4" /> Back to workspace
           </Link>
         </Button>
-        <Button asChild variant="ghost" size="sm" className="-mr-2">
-          <Link href="/dashboard">All projects</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/projects/${projectId}/review?analysis=${analysisId}`}>
+              Review changes &amp; reports
+            </Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="-mr-2">
+            <Link href="/dashboard">All projects</Link>
+          </Button>
+        </div>
       </div>
 
       <div>
@@ -381,10 +396,11 @@ export function GraphWorkspace({
                 impactDirect={impactDirectNodeIds}
                 impactIndirect={impactIndirectNodeIds}
                 impactPathEdges={impactHighlight?.pathEdgeIds ?? EMPTY_IDS}
+                coverageOverlay={coverageOverlay}
                 onSelectNode={selectNode}
                 onSelectEdge={selectEdge}
               />
-              <GraphLegend showImpact={impactHighlight !== null} />
+              <GraphLegend showImpact={impactHighlight !== null} showCoverage={coverageOverlay} />
             </div>
           ) : (
             <GraphListView
@@ -392,6 +408,7 @@ export function GraphWorkspace({
               edges={visibleEdges}
               selectedNodeId={selectedNodeId}
               selectedEdgeId={selectedEdgeId}
+              showCoverage={coverageOverlay}
               impactTargets={impactHighlight ? impactTargetSet : undefined}
               impactDirect={impactHighlight ? impactDirectSet : undefined}
               impactIndirect={impactHighlight ? impactIndirectSet : undefined}

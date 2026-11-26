@@ -3,6 +3,7 @@
 import * as React from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { CoverageStatusBadge } from "@/features/coverage/components/coverage-status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { GraphEdge, GraphNode } from "@/types/api";
 
@@ -16,6 +17,7 @@ export function GraphListView({
   edges,
   selectedNodeId,
   selectedEdgeId,
+  showCoverage,
   impactTargets,
   impactDirect,
   impactIndirect,
@@ -27,6 +29,8 @@ export function GraphListView({
   selectedNodeId: string | null;
   selectedEdgeId: string | null;
   /** Impact target/direct/indirect node IDs from a real impact result. */
+  /** Show the coverage column when the graph reports coverage statuses. */
+  showCoverage?: boolean;
   impactTargets?: ReadonlySet<string>;
   impactDirect?: ReadonlySet<string>;
   impactIndirect?: ReadonlySet<string>;
@@ -56,6 +60,9 @@ export function GraphListView({
                   <th scope="col" className="py-2 pr-4 font-medium">Name</th>
                   <th scope="col" className="py-2 pr-4 font-medium">Qualified name</th>
                   <th scope="col" className="py-2 pr-4 font-medium">File</th>
+                  {showCoverage ? (
+                    <th scope="col" className="py-2 pr-4 font-medium">Coverage</th>
+                  ) : null}
                   {impactTargets || impactDirect || impactIndirect ? (
                     <th scope="col" className="py-2 font-medium">Impact</th>
                   ) : null}
@@ -90,6 +97,11 @@ export function GraphListView({
                         {node.file_path}
                         {node.location ? ` · lines ${node.location.start_line}–${node.location.end_line}` : ""}
                       </td>
+                      {showCoverage ? (
+                        <td className="py-2 pr-4 align-top">
+                          <CoverageStatusBadge status={node.coverage_status} />
+                        </td>
+                      ) : null}
                       {impactTargets || impactDirect || impactIndirect ? (
                         <td className="py-2 align-top">
                           {isImpactTarget ? (

@@ -5,7 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
  * status is never carried by color alone. Node kind colors/shapes mirror
  * `graph-canvas.tsx`.
  */
-export function GraphLegend({ showImpact = false }: { showImpact?: boolean }) {
+export function GraphLegend({
+  showImpact = false,
+  showCoverage = false,
+}: {
+  showImpact?: boolean;
+  showCoverage?: boolean;
+}) {
   return (
     <Card>
       <CardHeader>
@@ -88,6 +94,35 @@ export function GraphLegend({ showImpact = false }: { showImpact?: boolean }) {
                 edge on the focused representative path
               </li>
             </ul>
+          </div>
+        ) : null}
+        {showCoverage ? (
+          <div>
+            <p className="mb-1.5 text-sm font-medium">
+              Coverage overlay (text marker appended to node labels)
+            </p>
+            <ul className="space-y-1 text-sm">
+              <li className="flex items-center gap-2">
+                <span aria-hidden="true" className="font-mono">✓</span>
+                covered — all executable lines of the symbol ran
+              </li>
+              <li className="flex items-center gap-2">
+                <span aria-hidden="true" className="font-mono">◑</span>
+                partially covered — some executable lines ran
+              </li>
+              <li className="flex items-center gap-2">
+                <span aria-hidden="true" className="font-mono">✗</span>
+                uncovered — no executable line ran
+              </li>
+              <li className="flex items-center gap-2">
+                <span aria-hidden="true" className="font-mono">?</span>
+                unknown — no coverage information, never zero coverage
+              </li>
+            </ul>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              The same statuses appear as text badges in the table view and the node details
+              panel. Execution coverage does not measure assertion quality.
+            </p>
           </div>
         ) : null}
         <p className="text-xs text-muted-foreground">

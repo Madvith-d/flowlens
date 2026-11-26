@@ -58,6 +58,11 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Override the default 20s timeout. */
   timeoutMs?: number;
+  /**
+   * Return the raw response body as text instead of parsing JSON — used for
+   * the Markdown report download endpoint (`text/markdown`).
+   */
+  rawText?: boolean;
 }
 
 function buildUrl(path: string, query?: QueryParams): string {
@@ -93,7 +98,7 @@ export function setUnauthorizedHandler(handler: () => void) {
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, form, query, signal, timeoutMs } = options;
+  const { method = "GET", body, form, query, signal, timeoutMs, rawText } = options;
 
   const { signal: combinedSignal, cancel } = withTimeout(
     timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -107,7 +112,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       credentials: "include",
       headers: {
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(form ? {} : { Accept: "application/json" }),
+        // Raw-text calls are the Markdown report download; JSON calls
+        // declare JSON; form uploads leave Accept to the browser default.
+        ...(rawText
+          ? { Accept: "text/markdown" }
+          : form
+            ? {}
+            : { Accept: "application/json" }),
       },
       body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
       signal: combinedSignal,
@@ -136,6 +147,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     return undefined as T;
   }
 
+  // Report download endpoint: the body is Markdown text, never JSON.
+  if (rawText) {
+    return (await response.text()) as T;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -147,6 +163,12 @@ export const apiClient = {
   postForm: <T>(path: string, form: FormData, signal?: AbortSignal) =>
     request<T>(path, { method: "POST", form, signal }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /**
+   * GET returning the raw body as text, with cookies and the same error
+   * mapping as JSON calls. Used for `GET /reports/{report_id}/download`.
+   */
+  getText: (path: string, signal?: AbortSignal) =>
+    request<string>(path, { method: "GET", signal, rawText: true }),
 };
 
 /**

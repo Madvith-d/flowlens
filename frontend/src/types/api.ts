@@ -398,3 +398,80 @@ export interface ImpactResult {
   warnings: string[];
   coverage_summary?: CoverageSummary | null;
 }
+
+// -------------------------------------------------------------------- diff
+
+/** File/symbol change kind of `ChangedSymbol`/`DiffFile.change_type`. */
+export type DiffChangeType = "added" | "modified" | "deleted";
+
+/**
+ * `ChangedSymbol` schema — a snapshot symbol touched by the diff, mapped
+ * via the snapshot's recorded source locations.
+ */
+export interface ChangedSymbol {
+  symbol_id: string;
+  qualified_name: string;
+  change_type: DiffChangeType;
+}
+
+/**
+ * `DiffFile` schema — one changed file with its mapped symbols and the
+ * honestly-reported unmapped remainder (e.g. module-level changes).
+ */
+export interface DiffFile {
+  path: string;
+  change_type: DiffChangeType;
+  changed_line_count: number;
+  mapped_symbols?: ChangedSymbol[];
+  unmapped_line_count?: number;
+  unmapped_reason?: string;
+}
+
+/** `DiffResult` schema — `POST /analyses/{analysis_id}/diff` response. */
+export interface DiffResult {
+  analysis_id: ObjectId;
+  files: DiffFile[];
+  combined_impact: ImpactResult;
+  warnings: string[];
+}
+
+// ---------------------------------------------------------------- coverage
+
+/**
+ * `CoverageResult` schema — `POST /analyses/{analysis_id}/coverage`
+ * response. Only summary counts plus unmatched-file count and warnings;
+ * per-symbol status arrives on graph nodes via `coverage_status`.
+ */
+export interface CoverageResult {
+  analysis_id: ObjectId;
+  summary: CoverageSummary;
+  /** Coverage files that could not be matched to snapshot paths. */
+  unmatched_file_count?: number;
+  warnings: string[];
+}
+
+// ----------------------------------------------------------------- reports
+
+/** `ReportFormat` schema. */
+export type ReportFormat = "markdown";
+
+/**
+ * Optional request body of `POST /analyses/{analysis_id}/reports` — scopes
+ * the generated report to specific impact targets.
+ */
+export interface ReportRequest {
+  target_ids?: string[];
+  direction?: ImpactDirection;
+  /** 1–10. */
+  max_depth?: number;
+}
+
+/** `ReportInfo` schema — metadata of a generated report. */
+export interface ReportInfo {
+  id: ObjectId;
+  analysis_id: ObjectId;
+  format: ReportFormat;
+  created_at: Timestamp;
+  /** Download filename for the report. */
+  filename: string;
+}
