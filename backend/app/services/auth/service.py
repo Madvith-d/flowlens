@@ -12,10 +12,12 @@ from urllib.parse import urlencode
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.core.security import (
+    decrypt_secret,
     encrypt_secret,
     sign_value,
     verify_signed,
 )
+from app.db.base import ensure_aware
 from app.models.auth import UserSession
 from app.models.user import User
 from app.repositories.auth import OAuthStateRepository, UserSessionRepository
@@ -42,6 +44,56 @@ AUTH_REQUIRED = ApiError(
     code="AUTH_REQUIRED",
     message="Authentication required.",
 )
+
+
+def active_access_token(
+    user: User,
+    settings: Settings,
+    provider: GitHubOAuthProvider,
+    credential_repo: GitHubCredentialRepository,
+) -> str:
+    """Return a usable GitHub access token, refreshing an expired one.
+
+    Expired access tokens are refreshed with the stored (encrypted) refresh
+    token and the rotated pair is persisted. If no credential exists or the
+    refresh fails, the stable GITHUB_TOKEN_ERROR (401) envelope is raised so
+    the client prompts a fresh sign-in. Refresh tokens themselves are never
+    returned or logged.
+    """
+    from app.services.github.app_client import USER_TOKEN_UNAVAILABLE
+
+    credential = credential_repo.get_active(user.id)
+    if credential is None:
+        raise USER_TOKEN_UNAVAILABLE
+    access_token = decrypt_secret(credential.encrypted_access_token, settings)
+    if credential.expires_at is None or ensure_aware(credential.expires_at) > datetime.now(
+        timezone.utc
+    ):
+        return access_token
+    if not credential.encrypted_refresh_token:
+        logger.info("github access token expired without refresh token")
+        raise USER_TOKEN_UNAVAILABLE
+    try:
+        tokens = provider.refresh_token(
+            decrypt_secret(credential.encrypted_refresh_token, settings)
+        )
+    except ApiError:
+        logger.warning("github token refresh failed; user must sign in again")
+        raise USER_TOKEN_UNAVAILABLE from None
+    expires_at = None
+    if tokens.expires_in:
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens.expires_in)
+    credential_repo.upsert(
+        user_id=user.id,
+        encrypted_access_token=encrypt_secret(tokens.access_token, settings),
+        encrypted_refresh_token=(
+            encrypt_secret(tokens.refresh_token, settings) if tokens.refresh_token else None
+        ),
+        expires_at=expires_at,
+        scopes=tokens.scopes,
+    )
+    logger.info("github access token refreshed", extra={"context": {"github_id": user.github_id}})
+    return tokens.access_token
 
 
 class AuthService:

@@ -100,6 +100,7 @@ class GitHubBundle:
         self.installation_service = GitHubInstallationService(
             settings=self.settings,
             app_client=request.app.state.github_app_client,
+            provider=request.app.state.github_provider,
             state_repo=OAuthStateRepository(db),
             credential_repo=GitHubCredentialRepository(db),
             installation_repo=GitHubInstallationRepository(db),
@@ -125,6 +126,7 @@ class ProjectsBundle:
         self.service = ProjectService(
             settings=self.settings,
             app_client=request.app.state.github_app_client,
+            provider=request.app.state.github_provider,
             project_repo=ProjectRepository(db),
             snapshot_repo=SnapshotRepository(db),
             credential_repo=GitHubCredentialRepository(db),

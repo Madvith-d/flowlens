@@ -222,3 +222,133 @@ def test_settings_leaves_valid_pem_and_empty_value_untouched(private_key_pem: st
     assert settings.github_app_private_key == private_key_pem.strip()
     empty = Settings(github_app_id=APP_ID, github_app_private_key="")
     assert empty.github_app_private_key == ""
+
+
+# --------------------------------------------------------- Phase 8 hardening
+import contextlib
+
+from app.services.github.app_client import (
+    ARCHIVE_DOWNLOAD_FAILED,
+    GITHUB_API_ERROR,
+    REF_NOT_FOUND,
+)
+
+
+@contextlib.contextmanager
+def _transport(settings: Settings, handler):
+    """Run HttpxGitHubAppClient against an in-process MockTransport."""
+    import app.services.github.app_client as app_client_module
+
+    client = HttpxGitHubAppClient(settings)
+    original_client_cls = app_client_module.httpx.Client
+    app_client_module.httpx.Client = lambda **kwargs: original_client_cls(
+        transport=httpx.MockTransport(handler), **kwargs
+    )
+    try:
+        yield client
+    finally:
+        app_client_module.httpx.Client = original_client_cls
+
+
+ARCHIVE_HOST = "codeload.github.com"
+
+
+def test_download_archive_follows_allowlisted_redirect(settings: Settings) -> None:
+    """A redirect to an allowlisted host is followed (bounded), not an error."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/tar.gz/main") and not seen[
+            -1
+        ].headers.get("x-followed"):
+            return httpx.Response(
+                302, headers={"location": f"https://{ARCHIVE_HOST}/octocat/hello-world/tar.gz/refs/heads/main"}
+            )
+        return httpx.Response(200, content=b"tarball-bytes")
+
+    with _transport(settings, handler) as client:
+        payload = client.download_archive("tok", "octocat/hello-world", "main")
+
+    assert payload == b"tarball-bytes"
+    assert len(seen) == 2
+
+
+def test_download_archive_blocks_non_allowlisted_redirect(settings: Settings) -> None:
+    """A redirect off the allowlist is blocked; the body is never fetched."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "https://evil.example/tarball"})
+
+    with _transport(settings, handler) as client:
+        with pytest.raises(Exception) as excinfo:
+            client.download_archive("tok", "octocat/hello-world", "main")
+
+    assert excinfo.value is ARCHIVE_DOWNLOAD_FAILED
+
+
+def test_download_archive_blocks_redirect_loops(settings: Settings) -> None:
+    """Redirect loops are bounded instead of hanging the request."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            302, headers={"location": f"https://{ARCHIVE_HOST}/loop/{len(seen)}"}
+        )
+
+    with _transport(settings, handler) as client:
+        with pytest.raises(Exception) as excinfo:
+            client.download_archive("tok", "octocat/hello-world", "main")
+
+    assert excinfo.value is ARCHIVE_DOWNLOAD_FAILED
+    assert len(seen) == 4  # MAX_REDIRECT_HOPS + 1
+
+
+def test_resolve_ref_rejects_path_traversal_ref(settings: Settings) -> None:
+    """A `..` ref is rejected before any request is made."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"sha": "a" * 40})
+
+    with _transport(settings, handler) as client:
+        with pytest.raises(Exception) as excinfo:
+            client.resolve_ref("tok", "octocat/hello-world", "../../user")
+
+    assert excinfo.value is REF_NOT_FOUND
+    assert seen == []
+
+
+def test_resolve_ref_encodes_unsafe_characters(settings: Settings) -> None:
+    """Query/fragment metacharacters in a ref cannot change the request URL."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"sha": "b" * 40})
+
+    with _transport(settings, handler) as client:
+        client.resolve_ref("tok", "octocat/hello-world", "feature x?v=1#frag")
+
+    raw_path = seen[0].url.raw_path
+    assert b"?" not in raw_path
+    assert b"#" not in raw_path
+    assert b"%20" in raw_path
+
+
+def test_resolve_ref_rejects_malformed_repository_name(settings: Settings) -> None:
+    """A tampered stored full_name cannot redirect the request path."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"sha": "c" * 40})
+
+    with _transport(settings, handler) as client:
+        with pytest.raises(Exception) as excinfo:
+            client.resolve_ref("tok", "octocat/hello-world/../user", "main")
+
+    assert excinfo.value is GITHUB_API_ERROR
+    assert seen == []

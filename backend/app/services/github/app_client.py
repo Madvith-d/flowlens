@@ -18,9 +18,10 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from cryptography.hazmat.primitives import hashes, serialization
@@ -97,6 +98,11 @@ API_VERSION_HEADERS = {
 MAX_REDIRECT_HOPS = 3
 INSTALLATION_TOKEN_TTL_MARGIN_SECONDS = 60  # request tokens valid ~1 hour
 
+# owner/repo names come from GitHub API payloads (or stored provenance); the
+# shape is validated before either is placed into a request URL so a tampered
+# stored value cannot redirect a request to a different API path.
+_SAFE_REPO_PATH_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
 
 # ------------------------------------------------------------------ dataclasses
 @dataclass(frozen=True)
@@ -156,6 +162,34 @@ def _repository_info_from_payload(payload: dict) -> RepositoryInfo:
         default_branch=payload.get("default_branch", ""),
         description=payload.get("description"),
     )
+
+
+def safe_repo_path(full_name: str) -> str:
+    """Validate an owner/repo pair before it is used in a request URL."""
+    if not full_name or not _SAFE_REPO_PATH_RE.match(full_name):
+        logger.warning("github request blocked: malformed repository name", extra={"context": {}})
+        raise GITHUB_API_ERROR
+    return full_name
+
+
+def safe_ref_segment(ref: str) -> str:
+    """Validate and percent-encode a user-supplied ref for a URL path.
+
+    Git references cannot contain `..`, ASCII control characters, leading or
+    trailing slashes, or exceed practical length limits; such values are
+    rejected outright rather than encoded, so a crafted ref can never walk the
+    request path to a different API endpoint or inject query/fragment syntax.
+    Remaining unsafe characters (spaces, `?`, `#`, non-ASCII) are
+    percent-encoded; `/` separators are preserved because both the commits API
+    and the codeload archive endpoint accept slash-separated refs.
+    """
+    if not ref or len(ref) > 4096:
+        raise REF_NOT_FOUND
+    if ".." in ref or any(ord(char) < 0x20 or ord(char) == 0x7F for char in ref):
+        raise REF_NOT_FOUND
+    if ref.startswith("/") or ref.endswith("/"):
+        raise REF_NOT_FOUND
+    return quote(ref, safe="/")
 
 
 # ----------------------------------------------------------- app JWT utilities
@@ -442,10 +476,10 @@ class HttpxGitHubAppClient(GitHubAppClient):
     # -------------------------------------------------------------------- refs
     def resolve_ref(self, installation_token: str, full_name: str, ref: str) -> ResolvedRef:
         """Resolve a branch/tag/commit ref to its immutable commit SHA."""
-        encoded_ref = ref.replace(" ", "%20")
+        encoded_ref = safe_ref_segment(ref)
         response = self._request(
             "GET",
-            f"{self._settings.github_api_base_url}/repos/{full_name}/commits/{encoded_ref}",
+            f"{self._settings.github_api_base_url}/repos/{safe_repo_path(full_name)}/commits/{encoded_ref}",
             headers=self._api_headers(installation_token),
         )
         if response.status_code == 404:
@@ -461,32 +495,49 @@ class HttpxGitHubAppClient(GitHubAppClient):
 
     # ---------------------------------------------------------------- archives
     def download_archive(self, installation_token: str, full_name: str, ref: str) -> bytes:
-        """Download the repository tarball from the allowlisted archive host."""
+        """Download the repository tarball from the allowlisted archive host.
+
+        Redirects are followed manually (bounded hop count) and only when the
+        target host is inside the SSRF allowlist, mirroring `_request`.
+        """
         limit = self._settings.snapshot_max_archive_bytes
         headers = self._api_headers(installation_token)
-        # tarball endpoint: codeload host enforces the redirect allowlist.
-        url = f"{self._settings.github_archive_base_url}/{full_name}/tar.gz/{ref}"
+        url = (
+            f"{self._settings.github_archive_base_url}"
+            f"/{safe_repo_path(full_name)}/tar.gz/{safe_ref_segment(ref)}"
+        )
         try:
-            with httpx.Client(timeout=self._settings.snapshot_download_timeout_seconds, follow_redirects=False) as client:
-                with client.stream("GET", url, headers=headers) as response:
-                    if response.status_code in (301, 302, 303, 307, 308):
-                        location = response.headers.get("location", "")
-                        if (urlparse(location).hostname or "") not in self._settings.github_allowed_hosts:
-                            logger.warning("archive redirect blocked", extra={"context": {}})
-                            raise ARCHIVE_DOWNLOAD_FAILED
+            with httpx.Client(
+                timeout=self._settings.snapshot_download_timeout_seconds, follow_redirects=False
+            ) as client:
+                current_url = url
+                for _hop in range(MAX_REDIRECT_HOPS + 1):
+                    host = urlparse(current_url).hostname or ""
+                    if host not in self._settings.github_allowed_hosts:
+                        logger.warning("archive host not allowlisted", extra={"context": {}})
                         raise ARCHIVE_DOWNLOAD_FAILED
-                    if response.status_code != 200:
-                        self._map_status(response)
-                        raise ARCHIVE_DOWNLOAD_FAILED
-                    chunks: list[bytes] = []
-                    total = 0
-                    for chunk in response.iter_bytes(64 * 1024):
-                        total += len(chunk)
-                        if total > limit:
-                            logger.warning("archive exceeds configured size limit", extra={"context": {}})
+                    with client.stream("GET", current_url, headers=headers) as response:
+                        if response.status_code in (301, 302, 303, 307, 308):
+                            location = response.headers.get("location", "")
+                            if (urlparse(location).hostname or "") not in self._settings.github_allowed_hosts:
+                                logger.warning("archive redirect blocked", extra={"context": {}})
+                                raise ARCHIVE_DOWNLOAD_FAILED
+                            current_url = location
+                            continue
+                        if response.status_code != 200:
+                            self._map_status(response)
                             raise ARCHIVE_DOWNLOAD_FAILED
-                        chunks.append(chunk)
-                    return b"".join(chunks)
+                        chunks: list[bytes] = []
+                        total = 0
+                        for chunk in response.iter_bytes(64 * 1024):
+                            total += len(chunk)
+                            if total > limit:
+                                logger.warning("archive exceeds configured size limit", extra={"context": {}})
+                                raise ARCHIVE_DOWNLOAD_FAILED
+                            chunks.append(chunk)
+                        return b"".join(chunks)
+                logger.warning("archive redirect loop blocked", extra={"context": {}})
+                raise ARCHIVE_DOWNLOAD_FAILED
         except httpx.HTTPError as exc:
             logger.warning("archive download transport error", extra={"context": {"error": type(exc).__name__}})
             raise ARCHIVE_DOWNLOAD_FAILED from exc

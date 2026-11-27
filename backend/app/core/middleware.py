@@ -28,6 +28,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             request_id_var.reset(token)
         duration_ms = (time.perf_counter() - started) * 1000
         response.headers["X-Request-ID"] = request_id
+        # Browsers must not MIME-sniff API responses (reports download as
+        # text/markdown, JSON everywhere else).
+        response.headers["X-Content-Type-Options"] = "nosniff"
         logger.info(
             "request",
             extra={

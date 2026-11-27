@@ -15,7 +15,6 @@ import logging
 from urllib.parse import urlencode
 
 from app.core.config import Settings
-from app.core.security import decrypt_secret
 from app.models.user import User
 from app.repositories.auth import OAuthStateRepository
 from app.repositories.github import GitHubCredentialRepository
@@ -35,12 +34,14 @@ class GitHubInstallationService:
         self,
         settings: Settings,
         app_client: GitHubAppClient,
+        provider,
         state_repo: OAuthStateRepository,
         credential_repo: GitHubCredentialRepository,
         installation_repo: GitHubInstallationRepository,
     ) -> None:
         self._settings = settings
         self._app_client = app_client
+        self._provider = provider
         self._states = state_repo
         self._credentials = credential_repo
         self._installations = installation_repo
@@ -82,12 +83,11 @@ class GitHubInstallationService:
 
     # ------------------------------------------------------------- installations
     def _user_access_token(self, user: User) -> str:
-        credential = self._credentials.get_active(user.id)
-        if credential is None:
-            from app.services.github.app_client import USER_TOKEN_UNAVAILABLE
+        from app.services.auth.service import active_access_token
 
-            raise USER_TOKEN_UNAVAILABLE
-        return decrypt_secret(credential.encrypted_access_token, self._settings)
+        return active_access_token(
+            user, self._settings, self._provider, self._credentials
+        )
 
     def list_user_installations(self, user: User) -> list[InstallationInfo]:
         """Live, verified installations for the authenticated user."""

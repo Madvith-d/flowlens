@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, ensure_aware, utcnow
@@ -13,6 +13,7 @@ class OAuthState(Base, TimestampMixin):
     """Unpredictable, one-time OAuth state values with short expiry."""
 
     __tablename__ = "oauth_states"
+    __table_args__ = (Index("ix_oauth_states_expires_at", "expires_at"),)
 
     state: Mapped[str] = mapped_column(String(64), primary_key=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -37,6 +38,7 @@ class UserSession(Base, TimestampMixin):
     """Server-side application session; the cookie only carries the signed ID."""
 
     __tablename__ = "user_sessions"
+    __table_args__ = (Index("ix_user_sessions_expires_at", "expires_at"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
     user_id: Mapped[str] = mapped_column(

@@ -171,3 +171,27 @@ changes must be made there first, coordinated between contributors.
 - Strict CORS origins; SSRF allowlist for GitHub API/archive hosts.
 - Per-user ownership checks on every project/snapshot/analysis/report resource.
 - No server paths, secrets, or stack traces in API responses.
+- Every response carries `X-Content-Type-Options: nosniff`.
+
+## Phase 8 hardening notes
+
+- **Token refresh:** expired GitHub access tokens are refreshed transparently
+  with the stored (encrypted) refresh token; the rotated pair replaces the
+  stored credentials. A failed refresh surfaces the stable 401
+  `GITHUB_TOKEN_ERROR` envelope so the client prompts a fresh sign-in.
+- **URL hardening:** user-supplied refs are validated (no `..`, no control
+  characters) and percent-encoded before being placed into GitHub API/archive
+  URLs; repository `owner/name` values are shape-checked. A crafted ref cannot
+  redirect an authenticated request to a different API path.
+- **Archive redirects:** repository archive downloads follow redirects only
+  within the SSRF allowlist, with a bounded hop count (matching the API
+  client's behavior).
+- **Analysis containment:** an unexpected error during analysis marks the run
+  `failed` with the stable `INTERNAL_ERROR` code (plus a diagnostic row)
+  instead of leaving it in `running` or leaking a 500; the wall-clock budget
+  (`ANALYSIS_MAX_WALL_SECONDS`, default 120) stops runaway parses with an
+  explicit `ANALYSIS_TIME_BUDGET_EXCEEDED` diagnostic.
+- **Retention:** expired OAuth states and application sessions are purged
+  opportunistically (24 h grace window) when new ones are created; both tables
+  carry an index on `expires_at` (migration `f7a3b9c1d204`).
+

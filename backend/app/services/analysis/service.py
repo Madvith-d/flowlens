@@ -14,6 +14,7 @@ or installed.
 
 import json
 import logging
+import time
 from pathlib import Path
 
 from app.core.config import Settings
@@ -124,8 +125,48 @@ class AnalysisService:
         return run
 
     def _execute(self, run: AnalysisRun, snapshot: SourceSnapshot) -> AnalysisRun:
-        """Parse every Python file in the snapshot; never raises for bad input."""
+        """Run the analysis, containing unexpected failures as `failed` runs.
+
+        An unexpected error must never leave a run stuck in `running` and must
+        never surface an internal error string to the client: the run is marked
+        `failed` with the stable `INTERNAL_ERROR` code, and the failure is
+        logged with the full stack trace server-side only.
+        """
         self._analyses.mark_running(run)
+        try:
+            return self._execute_inner(run, snapshot)
+        except Exception:
+            logger.exception(
+                "analysis failed unexpectedly",
+                extra={"context": {"analysis_id": run.id}},
+            )
+            try:
+                self._diagnostics.add_many(
+                    [
+                        AnalysisDiagnostic(
+                            analysis_id=run.id,
+                            file_path=None,
+                            severity="error",
+                            code="INTERNAL_ERROR",
+                            message="Analysis stopped unexpectedly. Please retry.",
+                        )
+                    ]
+                )
+            except Exception:
+                logger.exception(
+                    "could not record analysis failure diagnostic",
+                    extra={"context": {"analysis_id": run.id}},
+                )
+            return self._analyses.finish(
+                run,
+                state="failed",
+                python_file_count=0,
+                symbol_count=0,
+                error_code="INTERNAL_ERROR",
+            )
+
+    def _execute_inner(self, run: AnalysisRun, snapshot: SourceSnapshot) -> AnalysisRun:
+        """Parse every Python file in the snapshot; never raises for bad input."""
         try:
             snapshot_dir = Path(self._storage.snapshot_dir(snapshot.id))
         except (UnsafeSnapshotPathError, OSError):
@@ -164,8 +205,23 @@ class AnalysisService:
         diagnostics: list[AnalysisDiagnostic] = []
         symbol_budget = self._settings.analysis_max_symbols
         limit_diagnostic_added = False
+        deadline = time.monotonic() + self._settings.analysis_max_wall_seconds
 
         for rel_path in rel_paths:
+            if time.monotonic() > deadline:
+                diagnostics.append(
+                    AnalysisDiagnostic(
+                        analysis_id=run.id,
+                        file_path=None,
+                        severity="warning",
+                        code="ANALYSIS_TIME_BUDGET_EXCEEDED",
+                        message=(
+                            "Analysis time budget reached; remaining files were not "
+                            "catalogued. Results cover the files processed so far."
+                        ),
+                    )
+                )
+                break
             parsed = parse_python_file(
                 snapshot_dir / rel_path,
                 rel_path,

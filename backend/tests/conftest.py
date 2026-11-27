@@ -165,8 +165,8 @@ class MockGitHubAppClient(GitHubAppClient):
 
     # ------------------------------------------------------- installations
     def list_user_installations(self, user_access_token: str) -> list[InstallationInfo]:
-        if user_access_token != TEST_ACCESS_TOKEN:
-            # Second mock user has not installed the FlowLens GitHub App.
+        if user_access_token not in {TEST_ACCESS_TOKEN, "refreshed-access-token"}:
+            # Unknown token / second mock user has not installed the app.
             return []
         return [
             _installation(OWNED_INSTALLATION, "octocat", "user"),
@@ -239,12 +239,40 @@ class MockGitHubProvider(GitHubOAuthProvider):
             from app.services.github.client import TOKEN_EXCHANGE_FAILED
 
             raise TOKEN_EXCHANGE_FAILED
+        if code == "expired-creds":
+            # Access token already expired at storage time; refresh succeeds.
+            return TokenExchangeResult(
+                access_token=TEST_ACCESS_TOKEN,
+                refresh_token=TEST_REFRESH_TOKEN,
+                expires_in=-10,
+                scopes="read:user",
+            )
+        if code == "expired-bad-refresh":
+            # Access token expired and the refresh token is stale/revoked.
+            return TokenExchangeResult(
+                access_token=TEST_ACCESS_TOKEN,
+                refresh_token="stale-refresh-token",
+                expires_in=-10,
+                scopes="read:user",
+            )
         access_token = (
             self.SECOND_USER_TOKEN if code == "user-two" else TEST_ACCESS_TOKEN
         )
         return TokenExchangeResult(
             access_token=access_token,
             refresh_token=TEST_REFRESH_TOKEN,
+            expires_in=3600,
+            scopes="read:user",
+        )
+
+    def refresh_token(self, refresh_token: str) -> TokenExchangeResult:
+        from app.services.github.client import TOKEN_EXCHANGE_FAILED
+
+        if refresh_token != TEST_REFRESH_TOKEN:
+            raise TOKEN_EXCHANGE_FAILED
+        return TokenExchangeResult(
+            access_token="refreshed-access-token",
+            refresh_token="rotated-refresh-token",
             expires_in=3600,
             scopes="read:user",
         )
