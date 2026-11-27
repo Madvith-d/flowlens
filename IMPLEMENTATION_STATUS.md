@@ -1,9 +1,9 @@
 # FlowLens — Implementation Status
 
 **Contributor:** Madvith (backend, GitHub integration, analysis engine)
-**Current branch:** `madvith` (backend workstream, based on `main` `1013aeb`
-after the Phase 5A and 5B merges)
-**Phase:** 7A complete (diff mapping, coverage mapping, Markdown reports)
+**Current branch:** `madvith-phase8` (backend workstream, cut from `main`
+`4dc8503` after the Phase 7A/7B merges)
+**Phase:** 8 complete (stabilization and security hardening — backend side)
 
 ## Completed work
 
@@ -161,7 +161,138 @@ kept structural, SCC-condensation reachability, bounded `/graph` + `/nodes` +
 
 ## Next smallest actionable task
 
-Phase 7B (Sameeksha): diff/coverage/report UI — diff paste/upload and
-changed-file/symbol summary, coverage overlay, report preview and download.
+Phase 9 (merge + end-to-end integration): open the backend PR, then run the
+integrated E2E journeys with Sameeksha on `main`.
+
+
+## Phase 8 — Stabilization and security hardening (backend) — done
+
+### Security audit results (reviewed, no defects found in these areas)
+
+- Auth/session: one-time OAuth state (atomic conditional UPDATE), signed
+  `HttpOnly` session cookie with server-side state, Origin validation on all
+  unsafe methods, Fernet encryption at rest for access/refresh tokens,
+  `secrets.compare_digest` signature checks. Existing tests already cover
+  replayed/expired state, tampered cookies, revocation, and token leakage
+  (`test_no_token_in_responses_or_cookies`).
+- GitHub installation access: browser-supplied installation IDs are never
+  trusted; every use re-verifies against the live user installation list.
+  Installation tokens stay in memory only, are never persisted or returned.
+- SSRF: API calls restricted to the configured API host with manually
+  followed, allowlist-checked redirects (bounded); archive downloads were
+  hardened this phase (below).
+- Ownership: every project/snapshot/analysis/report route resolves ownership
+  in the service layer and collapses "not yours" into "not found".
+- Ingestion: ZIP/tar validation (traversal, symlinks, encrypted entries,
+  duplicate names, count/size/ratio limits) was already complete and tested.
+
+### Defects found and fixed
+
+1. **Archive download redirects were dead code** — `download_archive` raised
+   `ARCHIVE_DOWNLOAD_FAILED` for *every* redirect, even allowlisted ones,
+   contradicting the documented behavior. Now follows redirects with the same
+   bounded, allowlist-checked loop as API calls (`MAX_REDIRECT_HOPS`).
+2. **User-supplied refs were interpolated into URLs unencoded** —
+   `resolve_ref`/`download_archive` only replaced spaces, so `?`/`#` could
+   alter the request URL and a `..` ref could walk the path to a different
+   authenticated API endpoint. Refs are now validated (no `..`, no control
+   chars, non-empty) and percent-encoded; `owner/repo` names are
+   shape-checked before use.
+3. **Expired credentials were used until GitHub rejected them** — the stored
+   refresh token was never used. Added `refresh_token` to the provider
+   interface (`grant_type=refresh_token`), and `active_access_token`
+   (`services/auth/service.py`): expired access tokens are refreshed
+   transparently and the rotated pair is re-encrypted and persisted; a failed
+   refresh raises the stable 401 `GITHUB_TOKEN_ERROR` envelope.
+4. **Unexpected analysis errors had no containment** — an exception mid-run
+   aborted the request (500) and rolled the run row away. `_execute` now
+   catches unexpected exceptions, records an `INTERNAL_ERROR` diagnostic, and
+   finishes the run as `failed` with that stable error code.
+5. **No retention for expired auth rows** — `oauth_states` and
+   `user_sessions` grew without bound. Both repositories now purge rows
+   expired beyond a 24 h grace window when new rows are created, backed by
+   new `expires_at` indexes (migration `f7a3b9c1d204`).
+
+### Additions
+
+- Wall-clock analysis budget `ANALYSIS_MAX_WALL_SECONDS` (default 120 s):
+  parsing stops with an explicit `ANALYSIS_TIME_BUDGET_EXCEEDED` diagnostic
+  and the run finishes `completed_with_warnings` — results are never silently
+  partial.
+- `X-Content-Type-Options: nosniff` on every response.
+- `.env.example`: documented that callback URLs derive from
+  `BACKEND_PUBLIC_URL` (the previously listed `GITHUB_OAUTH_CALLBACK_URL`
+  variable was never read); added `ANALYSIS_MAX_WALL_SECONDS`.
+- `docs/architecture.md`: new "Phase 8 hardening notes" section.
+
+### Profiling (synthetic 151-file / 1,801-symbol / 4,048-edge corpus, in-memory SQLite, mocked GitHub)
+
+| Stage | Wall time |
+|---|---|
+| Upload + ZIP extraction (44 KiB zip) | ~28 ms |
+| Analysis (parse + resolve + persist) | ~576–850 ms |
+| Symbol search | ~7 ms |
+| Graph API (filtered) | ~71 ms |
+| Neighbor expansion | ~34 ms |
+| Impact (hub symbol, 500-node cap hit, `truncated=true`) | ~95–170 ms |
+| Report generation | ~52 ms |
+| Report download | ~6 ms |
+
+Analysis is the dominant cost and stays well inside the new wall-clock
+budget; all query APIs are far below any latency concern. The impact/risk
+path hit the configured `IMPACT_MAX_IMPACTED_NODES` bound correctly and
+reported `truncated: true`.
+
+### Files changed (Phase 8)
+
+- `app/services/github/app_client.py` (redirect handling, URL hardening)
+- `app/services/github/client.py` (provider `refresh_token`)
+- `app/services/auth/service.py` (`active_access_token`)
+- `app/services/github/service.py`, `app/services/projects/service.py`
+  (refresh-aware token resolution; provider injection)
+- `app/api/deps.py` (provider wiring for both bundles)
+- `app/services/analysis/service.py` (failure containment, time budget)
+- `app/core/config.py` (`analysis_max_wall_seconds`, docstring fix)
+- `app/core/middleware.py` (nosniff header)
+- `app/models/auth.py`, `app/repositories/auth.py` (retention + indexes)
+- `alembic/versions/f7a3b9c1d204_phase8_expiry_indexes.py` (new migration)
+- `.env.example`, `docs/architecture.md`, `IMPLEMENTATION_STATUS.md`
+- Tests: `tests/unit/test_github_app_client.py` (+6),
+  `tests/unit/test_oauth_state.py` (+2),
+  `tests/integration/test_analysis_hardening.py` (new, 4),
+  `tests/integration/test_token_refresh.py` (new, 3),
+  `tests/conftest.py` (mock refresh support)
+
+### Contract changes
+
+None. No route, schema, or error-code changes; the new diagnostics are stored
+rows only (the `diagnostics_summary` contract shape is unchanged).
+
+## Exact commands executed and actual results (Phase 8)
+
+| Command | Result |
+|---|---|
+| `.venv/bin/python -m pytest -q` | **227 passed** (212 pre-existing + 15 new), 1 starlette deprecation warning |
+| `.venv/bin/python -m compileall -q app tests alembic/versions` | clean |
+| `DATABASE_URL=sqlite:////tmp/fl_migrate_test.db .venv/bin/alembic upgrade head` | all 6 migrations applied cleanly on a fresh DB |
+| `... alembic downgrade -1 && ... upgrade head` | new migration downgrades and re-upgrades cleanly; both indexes present |
+| profiling scripts (scratchpad, mocked GitHub) | timings table above |
+
+No lint/type-check tooling is configured for the backend (plain `pytest` +
+`compileall` are the project's checks; `pyproject.toml` defines no ruff/mypy
+config).
+
+## Known issues, blockers, assumptions (Phase 8)
+
+- Token refresh is verified against the mocked provider only; it follows
+  GitHub's documented `grant_type=refresh_token` endpoint but has not been
+  exercised against a real GitHub App (same caveat as all GitHub integration
+  in this repo — mocked-provider tests only).
+- Analysis remains synchronous in-request (documented MVP simplification);
+  cancellation is therefore not applicable — the wall-clock budget bounds
+  runtime instead. A worker-based runner can replace `_execute` without
+  contract changes.
+- Manual smoke test with a real development GitHub App remains outstanding
+  (tracked since Phase 3A; requires real app credentials).
 
 

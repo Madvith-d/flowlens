@@ -8,14 +8,20 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.models.auth import OAuthState, UserSession
 from app.repositories.base import BaseRepository
 
 
 class OAuthStateRepository(BaseRepository):
+    # Retention: expired/consumed state rows are purged opportunistically when
+    # a new state is created; the grace window keeps recently expired rows for
+    # debugging while bounding table growth.
+    PURGE_GRACE_SECONDS = 24 * 3600
+
     def create(self, ttl_seconds: int, entropy_bytes: int = 32) -> OAuthState:
+        self.purge_expired()
         state = secrets.token_urlsafe(entropy_bytes)
         record = OAuthState(
             state=state,
@@ -24,6 +30,14 @@ class OAuthStateRepository(BaseRepository):
         self.session.add(record)
         self.session.flush()
         return record
+
+    def purge_expired(self) -> int:
+        """Delete state rows that expired more than the grace window ago."""
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.PURGE_GRACE_SECONDS)
+        result = self.session.execute(
+            delete(OAuthState).where(OAuthState.expires_at < cutoff)
+        )
+        return result.rowcount or 0
 
     def try_consume(self, state: str) -> bool:
         """Atomically mark the state consumed. True only for valid one-time use."""
@@ -40,7 +54,12 @@ class OAuthStateRepository(BaseRepository):
 
 
 class UserSessionRepository(BaseRepository):
+    # Retention: expired sessions are purged opportunistically when a new
+    # session is created (same grace window as OAuth states).
+    PURGE_GRACE_SECONDS = 24 * 3600
+
     def create(self, user_id: str, ttl_seconds: int) -> UserSession:
+        self.purge_expired()
         session_record = UserSession(
             id=uuid.uuid4().hex,
             user_id=user_id,
@@ -50,6 +69,14 @@ class UserSessionRepository(BaseRepository):
         self.session.add(session_record)
         self.session.flush()
         return session_record
+
+    def purge_expired(self) -> int:
+        """Delete sessions that expired more than the grace window ago."""
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=self.PURGE_GRACE_SECONDS)
+        result = self.session.execute(
+            delete(UserSession).where(UserSession.expires_at < cutoff)
+        )
+        return result.rowcount or 0
 
     def get_valid(self, session_id: str) -> UserSession | None:
         record = self.session.get(UserSession, session_id)

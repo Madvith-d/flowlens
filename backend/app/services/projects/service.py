@@ -13,7 +13,6 @@ import logging
 
 from app.core.config import Settings
 from app.core.errors import ApiError
-from app.core.security import decrypt_secret
 from app.models.projects import Project, SourceSnapshot
 from app.models.user import User
 from app.repositories.github import GitHubCredentialRepository
@@ -56,6 +55,7 @@ class ProjectService:
         self,
         settings: Settings,
         app_client: GitHubAppClient,
+        provider,
         project_repo: ProjectRepository,
         snapshot_repo: SnapshotRepository,
         credential_repo: GitHubCredentialRepository,
@@ -63,6 +63,7 @@ class ProjectService:
     ) -> None:
         self._settings = settings
         self._app_client = app_client
+        self._provider = provider
         self._projects = project_repo
         self._snapshots = snapshot_repo
         self._credentials = credential_repo
@@ -70,12 +71,11 @@ class ProjectService:
 
     # ------------------------------------------------------------- verification
     def _user_access_token(self, user: User) -> str:
-        credential = self._credentials.get_active(user.id)
-        if credential is None:
-            from app.services.github.app_client import USER_TOKEN_UNAVAILABLE
+        from app.services.auth.service import active_access_token
 
-            raise USER_TOKEN_UNAVAILABLE
-        return decrypt_secret(credential.encrypted_access_token, self._settings)
+        return active_access_token(
+            user, self._settings, self._provider, self._credentials
+        )
 
     def _verify_installation(self, user: User, installation_id: int):
         """The installation must appear in the user's own installations."""

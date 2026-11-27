@@ -48,6 +48,10 @@ class GitHubOAuthProvider:
     def exchange_code(self, code: str) -> TokenExchangeResult:
         raise NotImplementedError
 
+    def refresh_token(self, refresh_token: str) -> TokenExchangeResult:
+        """Rotate an expired user access token (Phase 8)."""
+        raise NotImplementedError
+
     def get_user(self, access_token: str) -> GitHubUserInfo:
         raise NotImplementedError
 
@@ -79,6 +83,43 @@ class HttpxGitHubOAuthProvider(GitHubOAuthProvider):
         if response.status_code != 200 or "error" in payload or not payload.get("access_token"):
             # Never log the payload: it may echo credential material.
             logger.warning("token exchange rejected by github")
+            raise TOKEN_EXCHANGE_FAILED
+        return TokenExchangeResult(
+            access_token=payload["access_token"],
+            refresh_token=payload.get("refresh_token"),
+            expires_in=payload.get("expires_in"),
+            scopes=payload.get("scope", ""),
+        )
+
+    def refresh_token(self, refresh_token: str) -> TokenExchangeResult:
+        """Exchange a refresh token for a rotated access token.
+
+        GitHub rotates refresh tokens on use; the response carries the new
+        pair. Failures raise TOKEN_EXCHANGE_FAILED without logging payload
+        material.
+        """
+        url = f"{self._settings.github_oauth_base_url}/login/oauth/access_token"
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                response = client.post(
+                    url,
+                    data={
+                        "client_id": self._settings.github_app_client_id,
+                        "client_secret": self._settings.github_app_client_secret,
+                        "grant_type": "refresh_token",
+                        "refresh_token": refresh_token,
+                    },
+                    headers={"Accept": "application/json"},
+                )
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "token refresh transport error",
+                extra={"context": {"error": type(exc).__name__}},
+            )
+            raise TOKEN_EXCHANGE_FAILED from exc
+        if response.status_code != 200 or "error" in payload or not payload.get("access_token"):
+            logger.warning("token refresh rejected by github")
             raise TOKEN_EXCHANGE_FAILED
         return TokenExchangeResult(
             access_token=payload["access_token"],

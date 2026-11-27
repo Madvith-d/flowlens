@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Static analysis bounds (kept deterministic and bounded; never execute code).
     analysis_max_symbols: int = 100_000
     analysis_max_calls_per_symbol: int = 2_000
+    # Wall-clock budget for one analysis run's parsing phase; when exceeded,
+    # remaining files are skipped and an explicit diagnostic is recorded.
+    analysis_max_wall_seconds: float = 120.0
     # Resolver bounds (Phase 5A): evidence kept per deduplicated edge, rows kept
     # for unresolved/ambiguous references (occurrence counters stay exact), and
     # an overall dependency-edge budget per analysis run.
@@ -152,8 +155,8 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
-    """Cached settings accessor (overridable in tests)."""
-    return Settings()  # pragma: no cover - thin wrapper for cacheability
+    """Fresh settings instance (tests override via `create_app(settings=...)`)."""
+    return Settings()
 
 
 @lru_cache
